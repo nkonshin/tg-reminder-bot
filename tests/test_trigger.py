@@ -21,3 +21,7 @@ def test_yo_normalization():
 
 def test_no_trigger():
     assert match_trigger("просто болтаем", STEMS) is None
+
+
+def test_multiword_stem_wins_over_single_word_stem():
+    assert match_trigger("поставь напоминание купить хлеб", STEMS) == "купить хлеб"

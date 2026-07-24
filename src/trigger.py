@@ -17,7 +17,8 @@ def _strip_fillers(text: str) -> str:
 def match_trigger(text: str, stems: list[str]) -> str | None:
     norm = _norm(text).strip()
     words = norm.split()
-    for stem in stems:
+    ordered_stems = sorted(stems, key=lambda s: (s.count(" "), len(s)), reverse=True)
+    for stem in ordered_stems:
         stem = _norm(stem)
         if " " in stem:
             idx = norm.find(stem)
