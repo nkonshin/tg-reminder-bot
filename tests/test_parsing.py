@@ -52,6 +52,31 @@ def test_small_hour_with_night_qualifier_kept():
     assert t == time(1, 0)
 
 
+def test_late_hour_with_night_qualifier_is_pm():
+    t, _ = extract_time("в 10 ночи выключить свет")
+    assert t == time(22, 0)
+
+
+def test_counting_phrase_is_not_a_time():
+    t, spans = extract_time("в 5 подъездов")
+    assert t is None and spans == []
+
+
+def test_counting_phrase_plural_prepositional():
+    t, _ = extract_time("в 3 магазинах")
+    assert t is None
+
+
+def test_counting_phrase_minutes_walk():
+    t, _ = extract_time("в 20 минутах ходьбы")
+    assert t is None
+
+
+def test_bare_hour_with_verb_still_parses():
+    t, _ = extract_time("в 5 позвонить маме")
+    assert t == time(17, 0)
+
+
 def test_part_of_day_evening():
     t, spans = extract_part_of_day("вечером посмотреть анализы", CFG)
     assert t == time(20, 0) and len(spans) == 1

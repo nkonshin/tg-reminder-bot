@@ -12,6 +12,10 @@ TIME_RE = re.compile(
     r"(?:\s+(утра|дня|вечера|ночи))?\b"
 )
 
+# genitive/prepositional-plural noun endings — "в 5 подъездов"/"в 3 магазинах" are counts,
+# not clock times; deliberately narrow (no full morphology), see extract_time
+COUNTED_NOUN_SUFFIXES = ("ами", "ями", "ов", "ев", "ах", "ях")
+
 PART_OF_DAY = [  # (фраза, ключ) — длинные фразы раньше коротких
     ("после обеда", "day"), ("в обед", "day"), ("с утра", "morning"),
     ("к вечеру", "evening"), ("утречком", "morning"), ("вечерком", "evening"),
@@ -34,6 +38,11 @@ MONTHS = {"января": 1, "февраля": 2, "марта": 3, "апреля
 DAY_MONTH_RE = re.compile(r"\b(\d{1,2})\s+(" + "|".join(MONTHS) + r")\b")
 
 
+def _next_word(text: str, pos: int) -> str:
+    m = re.match(r"\s*(\w+)", text[pos:])
+    return m.group(1) if m else ""
+
+
 def extract_time(text: str) -> tuple[time | None, list[Span]]:
     m = TIME_RE.search(text)
     if not m:
@@ -43,10 +52,15 @@ def extract_time(text: str) -> tuple[time | None, list[Span]]:
     qual = m.group(3)
     if hour > 23 or minute > 59:
         return None, []
+    if qual is None and _next_word(text, m.end()).endswith(COUNTED_NOUN_SUFFIXES):
+        return None, []  # «в 5 подъездов» — это счёт, а не время
     if qual in ("вечера", "дня") and hour < 12:
         hour += 12
-    elif qual == "ночи" and hour == 12:
-        hour = 0  # «в 12 ночи» — полночь, а не полдень
+    elif qual == "ночи":
+        if hour == 12:
+            hour = 0  # «в 12 ночи» — полночь, а не полдень
+        elif 7 <= hour <= 11:
+            hour += 12  # «в 10 ночи» — это 22:00, а не 10 утра
     elif qual is None and 1 <= hour <= 6:
         hour += 12  # «в 2» почти всегда значит 14:00, а не ночь
     return time(hour, minute), [m.span()]
