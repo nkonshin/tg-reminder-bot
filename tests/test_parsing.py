@@ -34,6 +34,16 @@ def test_no_time():
     assert t is None and spans == []
 
 
+def test_midnight_with_night_qualifier():
+    t, _ = extract_time("в 12 ночи принять таблетку")
+    assert t == time(0, 0)
+
+
+def test_small_hour_with_night_qualifier_kept():
+    t, _ = extract_time("в 1 ночи выключить свет")
+    assert t == time(1, 0)
+
+
 def test_part_of_day_evening():
     t, spans = extract_part_of_day("вечером посмотреть анализы", CFG)
     assert t == time(20, 0) and len(spans) == 1
@@ -42,6 +52,11 @@ def test_part_of_day_evening():
 def test_part_of_day_multiword():
     t, _ = extract_part_of_day("после обеда позвонить врачу", CFG)
     assert t == time(14, 0)
+
+
+def test_part_of_day_not_matched_inside_word():
+    t, spans = extract_part_of_day("сесть на заднем сиденье", CFG)
+    assert t is None and spans == []
 
 
 def test_relative_hours():

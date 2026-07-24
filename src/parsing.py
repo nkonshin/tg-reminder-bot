@@ -28,6 +28,8 @@ def extract_time(text: str) -> tuple[time | None, list[Span]]:
         return None, []
     if qual in ("вечера", "дня") and hour < 12:
         hour += 12
+    elif qual == "ночи" and hour == 12:
+        hour = 0  # «в 12 ночи» — полночь, а не полдень
     elif qual is None and 1 <= hour <= 6:
         hour += 12  # «в 2» почти всегда значит 14:00, а не ночь
     return time(hour, minute), [m.span()]
@@ -36,9 +38,9 @@ def extract_time(text: str) -> tuple[time | None, list[Span]]:
 def extract_part_of_day(text: str, cfg) -> tuple[time | None, list[Span]]:
     hours = {"morning": cfg.morning_hour, "day": cfg.day_hour, "evening": cfg.evening_hour}
     for phrase, key in PART_OF_DAY:
-        idx = text.find(phrase)
-        if idx != -1:
-            return time(hours[key], 0), [(idx, idx + len(phrase))]
+        m = re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", text)
+        if m:
+            return time(hours[key], 0), [m.span()]
     return None, []
 
 
