@@ -1,8 +1,16 @@
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from src.config import Config
-from src.parsing import extract_part_of_day, extract_relative, extract_time
+from src.parsing import (
+    ParsedWhen,
+    _extract_date,
+    extract_part_of_day,
+    extract_relative,
+    extract_time,
+    parse_when,
+    resolve,
+)
 
 TZ = ZoneInfo("Asia/Yekaterinburg")
 NOW = datetime(2026, 7, 24, 15, 0, tzinfo=TZ)  # пятница
@@ -67,3 +75,77 @@ def test_relative_hours():
 def test_relative_half_hour():
     dt, _ = extract_relative("через полчаса снять белье", NOW)
     assert dt == datetime(2026, 7, 24, 15, 30, tzinfo=TZ)
+
+
+def test_tomorrow_evening():
+    p = parse_when("завтра вечером посмотреть анализы", NOW, CFG)
+    assert (p.day, p.at, p.explicit_date) == (NOW.date() + timedelta(days=1), time(20, 0), True)
+    assert p.title == "посмотреть анализы"
+    assert resolve(p, NOW) == datetime(2026, 7, 25, 20, 0, tzinfo=TZ)
+
+
+def test_evening_today_rolls_when_passed():
+    p = parse_when("вечером выпить таблетки", NOW.replace(hour=21), CFG)
+    assert resolve(p, NOW.replace(hour=21)) == datetime(2026, 7, 25, 20, 0, tzinfo=TZ)
+
+
+def test_weekday_is_next_strictly():
+    p = parse_when("в пятницу утром сдать отчет", NOW, CFG)  # NOW — пятница
+    assert p.day == NOW.date() + timedelta(days=7)
+    assert p.title == "сдать отчет"
+
+
+def test_dd_mm():
+    p = parse_when("31.07 оплатить курс", NOW, CFG)
+    assert p.day == date(2026, 7, 31) and p.at is None
+    assert resolve(p, NOW) is None  # даты мало — нужен переспрос времени
+
+
+def test_day_month_name():
+    p = parse_when("25 июля в 12 забрать платье", NOW, CFG)
+    assert p.day == date(2026, 7, 25) and p.at == time(12, 0)
+
+
+def test_no_time_at_all_needs_clarify():
+    p = parse_when("посмотреть анализы", NOW, CFG)
+    assert p.at is None and p.day == NOW.date() and p.explicit_date is False
+    assert resolve(p, NOW) is None
+
+
+def test_explicit_past_needs_clarify():
+    p = parse_when("сегодня в 9 утра принять таблетку", NOW, CFG)  # уже 15:00
+    assert resolve(p, NOW) is None
+
+
+def test_relative_sets_everything():
+    p = parse_when("через 2 часа выключить духовку", NOW, CFG)
+    assert resolve(p, NOW) == NOW + timedelta(hours=2)
+    assert p.title == "выключить духовку"
+
+
+# --- bugs found in the reference implementation while implementing this task ---
+
+
+def test_breakfast_word_not_mistaken_for_tomorrow():
+    # "завтра" (tomorrow) is a substring of "позавтракать" (to have breakfast).
+    # A plain substring search for "завтра" would wrongly treat this as an
+    # explicit date and mutilate the title down to "покать".
+    p = parse_when("позавтракать в 9 утра", NOW, CFG)
+    assert p.day == NOW.date() and p.explicit_date is False
+    assert p.title == "позавтракать"
+
+
+def test_dotted_time_not_mistaken_for_date():
+    # "в 6.05" is a time written with a dot (common in ru: "17.30" for 5:30pm),
+    # but "6.05" also parses as a valid dd.mm date (6 May). The date regex must
+    # not re-claim digits already consumed by the time match.
+    p = parse_when("в 6.05 разбудить", NOW, CFG)
+    assert p.at == time(18, 5)
+    assert p.day == NOW.date() and p.explicit_date is False
+    assert p.title == "разбудить"
+
+
+def test_invalid_calendar_date_does_not_crash():
+    # "31.04" (April has 30 days) must not raise ValueError from date();
+    # it should simply fail to match as a date.
+    assert _extract_date("31.04 сходить к врачу", date(2026, 7, 24)) == (None, [])
