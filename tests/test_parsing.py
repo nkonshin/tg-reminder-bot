@@ -182,3 +182,33 @@ def test_invalid_calendar_date_does_not_crash():
     # "31.04" (April has 30 days) must not raise ValueError from date();
     # it should simply fail to match as a date.
     assert _extract_date("31.04 сходить к врачу", date(2026, 7, 24)) == (None, [])
+
+
+# --- fix round: Feb-29 rollover crash + dangling qualifier word in title ---
+
+
+def test_day_month_feb29_rollover_does_not_crash():
+    # 2024 is a leap year, so "29 февраля" parses fine as this year's date, but
+    # by 2024-03-01 it's already in the past and rolls to 2025 — not a leap
+    # year, so date.replace(year=2025) on Feb 29 raises ValueError unless guarded.
+    d, spans = _extract_date("29 февраля отметить праздник", date(2024, 3, 1))
+    assert d == date(2025, 2, 28)
+    assert spans
+
+
+def test_ddmm_feb29_rollover_does_not_crash():
+    d, spans = _extract_date("29.02 отметить праздник", date(2024, 3, 1))
+    assert d == date(2025, 2, 28)
+    assert spans
+
+
+def test_next_weekday_qualifier_masculine_cleans_title():
+    p = parse_when("в следующий вторник сдать отчет", NOW, CFG)  # NOW — пятница
+    assert p.day == NOW.date() + timedelta(days=4)  # ближайший вторник впереди
+    assert p.title == "сдать отчет"
+
+
+def test_next_weekday_qualifier_feminine_cleans_title():
+    p = parse_when("в следующую пятницу заплатить за интернет", NOW, CFG)  # NOW — пятница
+    assert p.day == NOW.date() + timedelta(days=7)  # сегодня тоже пятница — строго вперед
+    assert p.title == "заплатить за интернет"

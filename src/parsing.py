@@ -27,8 +27,10 @@ REL_RE = re.compile(r"\bчерез\s+(?:(полчаса)|(час(?:ик)?)|(\d+)
 TOMORROW_PLUS2_RE = re.compile(r"\bпослезавтра\b")
 TOMORROW_RE = re.compile(r"\bзавтра\b")
 TODAY_RE = re.compile(r"\bсегодня\b")
+NEXT_WEEKDAY_QUALIFIER = r"(?:следующ\w+|ближайш\w+|этот|эту)"
 WEEKDAY_RE = re.compile(
-    r"\bв[оа]?\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\b"
+    r"\bв[оа]?\s+(?:" + NEXT_WEEKDAY_QUALIFIER + r"\s+)?"
+    r"(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)\b"
 )
 WEEKDAYS = {"понедельник": 0, "вторник": 1, "среду": 2, "четверг": 3,
             "пятницу": 4, "субботу": 5, "воскресенье": 6}
@@ -102,6 +104,18 @@ def _overlaps(span: Span, others: list[Span]) -> bool:
     return any(start < e and s < end for s, e in others)
 
 
+def _roll_to_future(d: date, today: date) -> date:
+    """Advance a past-dated `d` to next year, same month/day — leap-safe."""
+    if d >= today:
+        return d
+    try:
+        return d.replace(year=today.year + 1)
+    except ValueError:
+        # «29 февраля», а следующий год — не високосный: ближайший разумный
+        # день — 28 февраля, а не отложенное на несколько лет 29-е
+        return d.replace(year=today.year + 1, day=28)
+
+
 def _extract_date(
     text: str, today: date, avoid: list[Span] | None = None
 ) -> tuple[date | None, list[Span]]:
@@ -121,7 +135,7 @@ def _extract_date(
         except ValueError:
             d = None  # несуществующая дата вроде «31 февраля» — считаем, что не распознали
         if d is not None:
-            return (d if d >= today else d.replace(year=today.year + 1)), [m.span()]
+            return _roll_to_future(d, today), [m.span()]
     for m in DDMM_RE.finditer(text):
         if _overlaps(m.span(), avoid):
             continue  # эти цифры уже разобраны как время (напр. «в 6.05»), а не дата
@@ -132,7 +146,7 @@ def _extract_date(
             d = date(today.year, mm, dd)
         except ValueError:
             continue  # несуществующая дата вроде «31.04»
-        return (d if d >= today else d.replace(year=today.year + 1)), [m.span()]
+        return _roll_to_future(d, today), [m.span()]
     return None, []
 
 
