@@ -1,7 +1,9 @@
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import caldav
+from caldav.lib.error import NotFoundError
 from icalendar import Alarm, Calendar, Event
 
 
@@ -30,21 +32,25 @@ class CalendarClient:
     def __init__(self, cfg):
         self.cfg = cfg
         self._cal = None
+        self._lock = threading.Lock()
 
     def _calendar(self):
-        if self._cal is not None:
-            return self._cal
-        client = caldav.DAVClient(url=self.cfg.caldav_url,
-                                  username=self.cfg.apple_id,
-                                  password=self.cfg.apple_app_password)
-        if self.cfg.calendar_url:
-            self._cal = caldav.Calendar(client=client, url=self.cfg.calendar_url)
-            return self._cal
-        for cal in client.principal().calendars():
-            if (cal.name or "").strip().lower() == self.cfg.calendar_name.lower():
-                self._cal = cal
+        # create_event/delete_event run under asyncio.to_thread, so two real
+        # threads can race here; the lock makes calendar discovery run once.
+        with self._lock:
+            if self._cal is not None:
                 return self._cal
-        raise LookupError(f"Calendar '{self.cfg.calendar_name}' not found")
+            client = caldav.DAVClient(url=self.cfg.caldav_url,
+                                      username=self.cfg.apple_id,
+                                      password=self.cfg.apple_app_password)
+            if self.cfg.calendar_url:
+                self._cal = caldav.Calendar(client=client, url=self.cfg.calendar_url)
+                return self._cal
+            for cal in client.principal().calendars():
+                if (cal.name or "").strip().lower() == self.cfg.calendar_name.lower():
+                    self._cal = cal
+                    return self._cal
+            raise LookupError(f"Calendar '{self.cfg.calendar_name}' not found")
 
     def create_event(self, title: str, start: datetime, end: datetime) -> str:
         uid = str(uuid.uuid4())
@@ -54,5 +60,5 @@ class CalendarClient:
     def delete_event(self, uid: str) -> None:
         try:
             self._calendar().get_event_by_uid(uid).delete()
-        except caldav.lib.error.NotFoundError:
+        except NotFoundError:
             pass
