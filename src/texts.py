@@ -42,6 +42,30 @@ def manual_time_error() -> str:
     return "Не поняла время. Напиши, например, «завтра в 18» или «в 19:30»."
 
 
+def stale_callback_text() -> str:
+    return "Это действие сейчас недоступно."
+
+
+def toast_done() -> str:
+    return "Готово, закрыла напоминание"
+
+
+def toast_cancel() -> str:
+    return "Отменила"
+
+
+def toast_snooze() -> str:
+    return "Отложила на час"
+
+
+def toast_edit() -> str:
+    return "Ок, выбери новое время"
+
+
+def toast_pod() -> str:
+    return "Поставила"
+
+
 def start_text() -> str:
     return ("Привет! Я буду присылать тебе напоминания, когда ты попросишь "
             "в переписке («напомни...»), и добавлять их в календарь.")
