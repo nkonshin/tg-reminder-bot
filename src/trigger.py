@@ -1,3 +1,5 @@
+import re
+
 from rapidfuzz.distance import DamerauLevenshtein
 
 FILLERS = {"мне", "пожалуйста", "пожалуйсто", "плиз", "плз", "про", "что", "чтобы"}
@@ -14,21 +16,27 @@ def _strip_fillers(text: str) -> str:
     return " ".join(words).strip()
 
 
+def _combine(before: str, after: str) -> str:
+    after = _strip_fillers(after)
+    return " ".join(part for part in (before.strip(), after) if part).strip()
+
+
 def match_trigger(text: str, stems: list[str]) -> str | None:
     norm = _norm(text).strip()
     words = norm.split()
-    ordered_stems = sorted(stems, key=lambda s: (s.count(" "), len(s)), reverse=True)
+    ordered_stems = sorted(stems, key=lambda s: (len(s.split()), len(s)), reverse=True)
     for stem in ordered_stems:
         stem = _norm(stem)
         if " " in stem:
-            idx = norm.find(stem)
-            if idx == -1:
+            pattern = re.compile(r"(?<!\w)" + re.escape(stem) + r"\w*")
+            m = pattern.search(norm)
+            if not m:
                 continue
-            rest = (norm[:idx] + " " + norm[idx + len(stem):]).strip()
-            return _strip_fillers(rest)
+            return _combine(norm[: m.start()], norm[m.end():])
         for i, w in enumerate(words):
             prefix = w.strip(",.!?")[: len(stem)]
             if DamerauLevenshtein.distance(prefix, stem) <= 1:
-                rest = " ".join(words[:i] + words[i + 1:])
-                return _strip_fillers(rest)
+                before = " ".join(words[:i])
+                after = " ".join(words[i + 1:])
+                return _combine(before, after)
     return None
