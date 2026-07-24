@@ -77,6 +77,14 @@ def test_bare_hour_with_verb_still_parses():
     assert t == time(17, 0)
 
 
+def test_chasov_suffix_is_still_a_time():
+    # "часов" ends in "-ов" too, but TIME_RE's own "час..." group consumes the
+    # whole word as part of the match, so the counting-noun check (which only
+    # looks at the word *after* the match) never sees it.
+    t, _ = extract_time("в 5 часов позвонить")
+    assert t == time(17, 0)
+
+
 def test_part_of_day_evening():
     t, spans = extract_part_of_day("вечером посмотреть анализы", CFG)
     assert t == time(20, 0) and len(spans) == 1
