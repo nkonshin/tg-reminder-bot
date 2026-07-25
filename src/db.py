@@ -4,25 +4,30 @@ from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS reminders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  day TEXT,
-  due_at TEXT,
-  status TEXT NOT NULL,
-  calendar_uid TEXT,
-  calendar_pending INTEGER NOT NULL DEFAULT 0,
-  calendar_attempts INTEGER NOT NULL DEFAULT 0,
-  calendar_last_attempt_at TEXT,
-  awaiting_manual_time INTEGER NOT NULL DEFAULT 0,
-  awaiting_manual_since TEXT,
-  pings_sent INTEGER NOT NULL DEFAULT 0,
-  last_ping_at TEXT,
-  delivery_failures INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-"""
+# Single source of truth for the reminders table's columns, used both to
+# build the initial CREATE TABLE and to migrate an existing (older) database
+# file forward -- see Database._migrate. Add new columns here, not just in a
+# hand-written ALTER TABLE, so init() never drifts from the current schema.
+COLUMN_DEFS = [
+    ("id", "INTEGER PRIMARY KEY AUTOINCREMENT"),
+    ("title", "TEXT NOT NULL"),
+    ("day", "TEXT"),
+    ("due_at", "TEXT"),
+    ("status", "TEXT NOT NULL"),
+    ("calendar_uid", "TEXT"),
+    ("calendar_pending", "INTEGER NOT NULL DEFAULT 0"),
+    ("calendar_attempts", "INTEGER NOT NULL DEFAULT 0"),
+    ("calendar_last_attempt_at", "TEXT"),
+    ("awaiting_manual_time", "INTEGER NOT NULL DEFAULT 0"),
+    ("awaiting_manual_since", "TEXT"),
+    ("pings_sent", "INTEGER NOT NULL DEFAULT 0"),
+    ("last_ping_at", "TEXT"),
+    ("delivery_failures", "INTEGER NOT NULL DEFAULT 0"),
+    ("created_at", "TEXT NOT NULL"),
+]
+
+SCHEMA = "CREATE TABLE IF NOT EXISTS reminders (\n  " + ",\n  ".join(
+    f"{name} {decl}" for name, decl in COLUMN_DEFS) + "\n);"
 
 
 def to_iso(dt: datetime) -> str:
@@ -66,8 +71,22 @@ class Database:
             # this same file concurrently (aiogram's update handling and the
             # scheduler loop are separate asyncio tasks in the same process).
             await c.execute("PRAGMA journal_mode=WAL")
+            # CREATE TABLE IF NOT EXISTS is a no-op against a database file
+            # created by an older version of this schema -- it does NOT add
+            # columns to an existing table. Without the migration below, every
+            # query against such a file would fail with "no such column" the
+            # moment it touched a column added after the file was created.
             await c.execute(SCHEMA)
+            await self._migrate(c)
             await c.commit()
+
+    async def _migrate(self, c: aiosqlite.Connection) -> None:
+        cur = await c.execute("PRAGMA table_info(reminders)")
+        existing = {row[1] for row in await cur.fetchall()}
+        for name, decl in COLUMN_DEFS:
+            if name in existing:
+                continue
+            await c.execute(f"ALTER TABLE reminders ADD COLUMN {name} {decl}")
 
     async def _exec(self, sql: str, args: tuple = ()) -> int:
         async with aiosqlite.connect(self.path) as c:
