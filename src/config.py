@@ -40,6 +40,15 @@ class Config(BaseSettings):
     # flow._calendar_retry_due.
     calendar_retry_base_minutes: int = 2
     calendar_retry_max_minutes: int = 30
+    # Minimum time between admin alerts about an ongoing/recurring CalDAV
+    # outage. A success anywhere (create or delete) clears this immediately,
+    # so this only paces repeat alerts while it's still down — see
+    # flow._alert_calendar_outage.
+    calendar_outage_alert_cooldown_minutes: int = 60
+    # Minimum time between admin alerts about the same reminder repeatedly
+    # raising an unexpected exception in the scheduler — see
+    # flow._alert_row_error.
+    row_error_alert_cooldown_minutes: int = 60
 
     db_path: str = "data/reminders.sqlite3"
 

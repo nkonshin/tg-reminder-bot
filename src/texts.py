@@ -55,6 +55,14 @@ def calendar_delete_failure_admin_text(error: Exception) -> str:
     return f"Не смогла удалить событие из календаря: {error}"
 
 
+def calendar_recovered_admin_text() -> str:
+    return "Календарь снова доступен."
+
+
+def row_processing_failed_admin_text(rid: int, title: str, error: Exception) -> str:
+    return f"Напоминание «{title}» (id {rid}) не обрабатывается из-за ошибки: {error}"
+
+
 def her_unreachable_admin_text(what: str, error: Exception) -> str:
     return f"Не смогла написать ей ({what}) — личка недоступна: {error}"
 
