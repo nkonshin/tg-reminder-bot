@@ -13,6 +13,17 @@ def test_defaults():
     assert cfg.evening_hour == 20
     assert cfg.tick_seconds == 30
     assert cfg.max_repings == 3
+    assert cfg.dialog_chat_id == 0
+    assert cfg.max_delivery_failures == 3
+    assert cfg.manual_time_timeout_minutes == 30
+    assert cfg.calendar_retry_base_minutes == 2
+    assert cfg.calendar_retry_max_minutes == 30
+    assert cfg.caldav_timeout_seconds == 15
+
+
+def test_dialog_chat_id_overridable():
+    cfg = make_config(dialog_chat_id=555)
+    assert cfg.dialog_chat_id == 555
 
 
 def test_stems_parsed_from_csv():

@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
@@ -13,9 +13,13 @@ CREATE TABLE IF NOT EXISTS reminders (
   status TEXT NOT NULL,
   calendar_uid TEXT,
   calendar_pending INTEGER NOT NULL DEFAULT 0,
+  calendar_attempts INTEGER NOT NULL DEFAULT 0,
+  calendar_last_attempt_at TEXT,
   awaiting_manual_time INTEGER NOT NULL DEFAULT 0,
+  awaiting_manual_since TEXT,
   pings_sent INTEGER NOT NULL DEFAULT 0,
   last_ping_at TEXT,
+  delivery_failures INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 """
@@ -38,9 +42,13 @@ class Reminder:
     status: str
     calendar_uid: str | None
     calendar_pending: int
+    calendar_attempts: int
+    calendar_last_attempt_at: str | None
     awaiting_manual_time: int
+    awaiting_manual_since: str | None
     pings_sent: int
     last_ping_at: str | None
+    delivery_failures: int
     created_at: str
 
 
@@ -54,6 +62,10 @@ class Database:
     async def init(self) -> None:
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         async with aiosqlite.connect(self.path) as c:
+            # Insurance against handler/scheduler write collisions: both hit
+            # this same file concurrently (aiogram's update handling and the
+            # scheduler loop are separate asyncio tasks in the same process).
+            await c.execute("PRAGMA journal_mode=WAL")
             await c.execute(SCHEMA)
             await c.commit()
 
@@ -80,9 +92,18 @@ class Database:
         return await self.get(rid)
 
     async def add_clarify(self, title: str, day: str) -> "Reminder":
-        rid = await self._exec(
-            "INSERT INTO reminders (title, day, status, created_at) VALUES (?,?,?,?)",
-            (title, day, "pending_clarify", to_iso(datetime.now(timezone.utc))))
+        # A new clarify card supersedes any older "Напишу время" flag: her
+        # next free-text reply is meant to answer this new prompt, not some
+        # abandoned one from a previous reminder.
+        async with aiosqlite.connect(self.path) as c:
+            await c.execute(
+                "UPDATE reminders SET awaiting_manual_time=0, awaiting_manual_since=NULL "
+                "WHERE awaiting_manual_time=1")
+            cur = await c.execute(
+                "INSERT INTO reminders (title, day, status, created_at) VALUES (?,?,?,?)",
+                (title, day, "pending_clarify", to_iso(datetime.now(timezone.utc))))
+            await c.commit()
+            rid = cur.lastrowid
         return await self.get(rid)
 
     async def get(self, rid: int) -> "Reminder | None":
@@ -94,29 +115,64 @@ class Database:
     async def promote(self, rid: int, due: datetime) -> None:
         # calendar_pending=1 for the same reason as in add_pending: the new due
         # time is persisted before the calendar catches up, so an interruption
-        # in between leaves the row repairable by the scheduler.
+        # in between leaves the row repairable by the scheduler. calendar_attempts
+        # / calendar_last_attempt_at reset too: this is a fresh scheduling, not a
+        # continuation of whatever backoff a previous due time had accrued.
         await self._exec(
             "UPDATE reminders SET status='pending', due_at=?, pings_sent=0, "
-            "last_ping_at=NULL, awaiting_manual_time=0, calendar_pending=1 WHERE id=?",
+            "last_ping_at=NULL, delivery_failures=0, awaiting_manual_time=0, "
+            "awaiting_manual_since=NULL, calendar_pending=1, calendar_attempts=0, "
+            "calendar_last_attempt_at=NULL WHERE id=?",
             (to_iso(due), rid))
 
     async def set_calendar(self, rid: int, uid: str | None, pending: int) -> None:
-        await self._exec("UPDATE reminders SET calendar_uid=?, calendar_pending=? WHERE id=?",
-                         (uid, pending, rid))
+        if pending:
+            await self._exec(
+                "UPDATE reminders SET calendar_uid=?, calendar_pending=? WHERE id=?",
+                (uid, pending, rid))
+        else:
+            await self._exec(
+                "UPDATE reminders SET calendar_uid=?, calendar_pending=?, calendar_attempts=0, "
+                "calendar_last_attempt_at=NULL WHERE id=?", (uid, pending, rid))
 
-    async def set_awaiting_manual(self, rid: int) -> None:
+    async def record_calendar_attempt(self, rid: int, now: datetime) -> None:
+        """Bookkeeping for the scheduler's retry backoff: called right before
+        each repair attempt so a dead CalDAV server gets retried with
+        increasing delay instead of every tick — see flow._calendar_retry_due."""
+        await self._exec(
+            "UPDATE reminders SET calendar_attempts=calendar_attempts+1, "
+            "calendar_last_attempt_at=? WHERE id=?", (to_iso(now), rid))
+
+    async def set_awaiting_manual(self, rid: int, now: datetime) -> None:
         # Both updates run on a single connection/transaction so a concurrent
         # call can't interleave between "clear all" and "set this one" and
         # leave more than one row flagged.
         async with aiosqlite.connect(self.path) as c:
-            await c.execute("UPDATE reminders SET awaiting_manual_time=0 WHERE awaiting_manual_time=1")
-            await c.execute("UPDATE reminders SET awaiting_manual_time=1 WHERE id=?", (rid,))
+            await c.execute(
+                "UPDATE reminders SET awaiting_manual_time=0, awaiting_manual_since=NULL "
+                "WHERE awaiting_manual_time=1")
+            await c.execute(
+                "UPDATE reminders SET awaiting_manual_time=1, awaiting_manual_since=? WHERE id=?",
+                (to_iso(now), rid))
             await c.commit()
 
-    async def get_awaiting_manual(self) -> "Reminder | None":
-        return await self._row(
+    async def clear_awaiting_manual(self) -> None:
+        await self._exec(
+            "UPDATE reminders SET awaiting_manual_time=0, awaiting_manual_since=NULL "
+            "WHERE awaiting_manual_time=1")
+
+    async def get_awaiting_manual(self, now: datetime, timeout_minutes: int) -> "Reminder | None":
+        r = await self._row(
             f"SELECT {COLS} FROM reminders WHERE awaiting_manual_time=1 "
             "AND status='pending_clarify' ORDER BY id DESC LIMIT 1")
+        if r is None or r.awaiting_manual_since is None:
+            return r
+        # She tapped "Напишу время", got distracted, and never answered: a
+        # much later unrelated private message must not be silently consumed
+        # as the answer to a reminder she has long forgotten about.
+        if now - from_iso(r.awaiting_manual_since) > timedelta(minutes=timeout_minutes):
+            return None
+        return r
 
     async def list_pending(self) -> list["Reminder"]:
         async with aiosqlite.connect(self.path) as c:
@@ -124,5 +180,20 @@ class Database:
             return [Reminder(*row) for row in await cur.fetchall()]
 
     async def record_ping(self, rid: int, now: datetime) -> None:
-        await self._exec("UPDATE reminders SET pings_sent=pings_sent+1, last_ping_at=? WHERE id=?",
-                         (to_iso(now), rid))
+        # A successful send clears any earlier delivery failures for this row
+        # — see record_delivery_failure / flow._ping.
+        await self._exec(
+            "UPDATE reminders SET pings_sent=pings_sent+1, last_ping_at=?, "
+            "delivery_failures=0 WHERE id=?", (to_iso(now), rid))
+
+    async def record_delivery_failure(self, rid: int) -> int:
+        """Count consecutive failed delivery attempts (send_message raised —
+        she never pressed /start, blocked the bot, deactivated). Returns the
+        new count so the caller can decide whether to give up on the row."""
+        async with aiosqlite.connect(self.path) as c:
+            await c.execute(
+                "UPDATE reminders SET delivery_failures=delivery_failures+1 WHERE id=?", (rid,))
+            await c.commit()
+            cur = await c.execute("SELECT delivery_failures FROM reminders WHERE id=?", (rid,))
+            row = await cur.fetchone()
+            return row[0] if row else 0
