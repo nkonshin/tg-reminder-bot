@@ -10,6 +10,10 @@ def cap(s: str) -> str:
     return s[:1].upper() + s[1:] if s else s
 
 
+def default_title() -> str:
+    return "Напоминание"
+
+
 def format_dt(dt: datetime, now: datetime) -> str:
     hm = dt.strftime("%H:%M")
     if dt.date() == now.date():
@@ -40,6 +44,14 @@ def manual_time_prompt() -> str:
 
 def manual_time_error() -> str:
     return "Не поняла время. Напиши, например, «завтра в 18» или «в 19:30»."
+
+
+def calendar_failure_admin_text(title: str, error: Exception) -> str:
+    return f"Календарь недоступен, событие «{title}» не создано: {error}"
+
+
+def calendar_delete_failure_admin_text(error: Exception) -> str:
+    return f"Не смогла удалить событие из календаря: {error}"
 
 
 def stale_callback_text() -> str:

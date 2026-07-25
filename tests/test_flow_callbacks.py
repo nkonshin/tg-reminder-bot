@@ -47,6 +47,34 @@ async def test_snooze_shifts_due(deps):
     assert r.pings_sent == 0
 
 
+async def test_snooze_repoints_calendar_event(deps):
+    # The old event still shows the pre-snooze time; leaving it in place
+    # would make her calendar disagree with the bot for an hour.
+    r = await make_pending(deps)
+    await on_callback("snooze:1", deps, NOW)
+    got = await deps.db.get(1)
+    assert deps.cal.deleted == [r.calendar_uid]
+    assert len(deps.cal.created) == 2
+    new_uid, title, start, _end = deps.cal.created[-1]
+    assert title == r.title
+    assert start == NOW + timedelta(hours=1)
+    assert got.calendar_uid == new_uid
+    assert got.calendar_pending == 0
+
+
+async def test_snooze_still_reschedules_when_calendar_create_fails(deps):
+    await make_pending(deps)
+    deps.cal.fail = True
+    toast = await on_callback("snooze:1", deps, NOW)
+    r = await deps.db.get(1)
+    assert r.status == "pending"
+    assert from_iso(r.due_at) == NOW.astimezone(timezone.utc) + timedelta(hours=1)
+    assert r.calendar_pending == 1
+    assert r.calendar_uid is None
+    assert toast == texts.toast_snooze()
+    assert any(m.chat_id == deps.cfg.admin_user_id for m in deps.bot.sent)
+
+
 async def test_pod_choice_promotes_clarify(deps):
     await process_dialog_message("напомни завтра про анализы", deps, NOW)
     await on_callback("pod:1:evening", deps, NOW)

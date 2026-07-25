@@ -41,7 +41,7 @@ async def process_dialog_message(text: str, deps: Deps, now: datetime) -> None:
     if cleaned is None:
         return
     parsed = parse_when(cleaned, now, deps.cfg)
-    title = texts.cap(parsed.title) or "Напоминание"
+    title = texts.cap(parsed.title) or texts.default_title()
     due = resolve(parsed, now)
     if due is None:
         r = await deps.db.add_clarify(title, parsed.day.isoformat())
@@ -51,6 +51,22 @@ async def process_dialog_message(text: str, deps: Deps, now: datetime) -> None:
     await create_reminder(title, due, deps, now)
 
 
+async def _create_calendar_event(title: str, due: datetime, deps: Deps) -> tuple[str | None, int]:
+    """Create a calendar event for (title, due). Returns (uid, calendar_pending);
+    calendar_pending=1 means creation failed, the admin was alerted, and the
+    scheduler is expected to retry later — callers must persist both via
+    set_calendar and must not let this failure block whatever DB state change
+    they're already making."""
+    try:
+        end = due + timedelta(minutes=deps.cfg.event_duration_minutes)
+        uid = await asyncio.to_thread(deps.cal.create_event, title, due, end)
+        return uid, 0
+    except Exception as e:
+        log.exception("calendar create failed")
+        await notify_admin(deps, texts.calendar_failure_admin_text(title, e))
+        return None, 1
+
+
 async def create_reminder(title: str, due: datetime, deps: Deps, now: datetime,
                            rid: int | None = None) -> None:
     if rid is None:
@@ -58,14 +74,7 @@ async def create_reminder(title: str, due: datetime, deps: Deps, now: datetime,
         rid = r.id
     else:
         await deps.db.promote(rid, due)
-    uid, pending = None, 1
-    try:
-        end = due + timedelta(minutes=deps.cfg.event_duration_minutes)
-        uid = await asyncio.to_thread(deps.cal.create_event, title, due, end)
-        pending = 0
-    except Exception as e:
-        log.exception("calendar create failed")
-        await notify_admin(deps, f"Календарь недоступен, событие «{title}» не создано: {e}")
+    uid, pending = await _create_calendar_event(title, due, deps)
     await deps.db.set_calendar(rid, uid, pending)
     await deps.bot.send_message(
         deps.cfg.her_user_id,
@@ -95,7 +104,7 @@ async def _delete_event_if_any(r, deps: Deps) -> None:
         try:
             await asyncio.to_thread(deps.cal.delete_event, r.calendar_uid)
         except Exception as e:
-            await notify_admin(deps, f"Не смогла удалить событие из календаря: {e}")
+            await notify_admin(deps, texts.calendar_delete_failure_admin_text(e))
 
 
 def _clarify_day(r, deps: Deps, now: datetime) -> date:
@@ -126,7 +135,16 @@ async def on_callback(data: str, deps: Deps, now: datetime) -> str:
         await deps.db.set_status(rid, "cancelled")
         return texts.toast_cancel()
     if action == "snooze":
-        await deps.db.promote(rid, now + timedelta(minutes=deps.cfg.snooze_minutes))
+        due = now + timedelta(minutes=deps.cfg.snooze_minutes)
+        await deps.db.promote(rid, due)
+        # The old event still shows the pre-snooze time, so it must be
+        # re-pointed rather than left stale in her calendar. A CalDAV hiccup
+        # here must not undo the reschedule — set_calendar always records
+        # whatever _create_calendar_event managed (uid or a pending flag for
+        # the scheduler to retry).
+        await _delete_event_if_any(r, deps)
+        uid, pending = await _create_calendar_event(r.title, due, deps)
+        await deps.db.set_calendar(rid, uid, pending)
         return texts.toast_snooze()
     if action == "edit":
         await _delete_event_if_any(r, deps)

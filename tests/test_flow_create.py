@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from src import texts
 from src.config import Config
 from src.db import Database, from_iso
 from src.flow import Deps, process_dialog_message
@@ -41,6 +42,16 @@ async def test_no_time_creates_clarify(deps):
     r = await deps.db.get(1)
     assert r.status == "pending_clarify" and r.day == "2026-07-24"
     assert "когда?" in deps.bot.sent[0].text
+
+
+async def test_empty_title_falls_back_to_default(deps):
+    # The trigger stem plus the date/time phrase consume the whole message,
+    # leaving no task description behind.
+    await process_dialog_message("напомни завтра в 17", deps, NOW)
+    r = await deps.db.get(1)
+    assert r.status == "pending"
+    assert r.title == texts.default_title()
+    assert r.title != ""
 
 
 async def test_calendar_failure_still_creates(deps):
