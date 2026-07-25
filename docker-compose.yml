@@ -7,3 +7,8 @@ services:
       DB_PATH: /data/reminders.sqlite3
     volumes:
       - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
