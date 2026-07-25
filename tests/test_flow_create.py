@@ -62,3 +62,37 @@ async def test_calendar_failure_still_creates(deps):
     chats = [m.chat_id for m in deps.bot.sent]
     assert 200 in chats  # алерт админу
     assert any("не получилось" in m.text for m in deps.bot.sent if m.chat_id == 100)
+
+
+async def test_admin_alerted_when_confirmation_card_undeliverable(deps):
+    # She never pressed /start (or blocked the bot): the reminder and its
+    # calendar event must still be created, but nobody would otherwise know
+    # she was never actually told about it.
+    deps.bot.fail_chat_ids.add(deps.cfg.her_user_id)
+    await process_dialog_message("напомни завтра в 17 сдать кровь", deps, NOW)
+    r = await deps.db.get(1)
+    assert r.status == "pending" and r.calendar_pending == 0
+    admin_alerts = [m for m in deps.bot.sent if m.chat_id == deps.cfg.admin_user_id]
+    assert len(admin_alerts) == 1
+    assert "недоступна" in admin_alerts[0].text
+
+
+async def test_title_is_capped_so_ping_cannot_exceed_telegram_limit(deps):
+    # An uncapped title from a very long dictated message could make a
+    # formatted ping/card exceed Telegram's 4096-char message limit, which
+    # would then fail to send on every single attempt.
+    long_desc = "слово " * 100  # ~600 chars, well past the cap
+    await process_dialog_message(f"напомни завтра в 17 {long_desc}", deps, NOW)
+    r = await deps.db.get(1)
+    assert len(r.title) <= 200
+    assert len(texts.ping_text(r.title)) < 4096
+
+
+async def test_admin_alerted_when_clarify_card_undeliverable(deps):
+    deps.bot.fail_chat_ids.add(deps.cfg.her_user_id)
+    await process_dialog_message("напомни про анализы", deps, NOW)
+    r = await deps.db.get(1)
+    assert r.status == "pending_clarify"
+    admin_alerts = [m for m in deps.bot.sent if m.chat_id == deps.cfg.admin_user_id]
+    assert len(admin_alerts) == 1
+    assert "недоступна" in admin_alerts[0].text

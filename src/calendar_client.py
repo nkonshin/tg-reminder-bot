@@ -42,7 +42,8 @@ class CalendarClient:
                 return self._cal
             client = caldav.DAVClient(url=self.cfg.caldav_url,
                                       username=self.cfg.apple_id,
-                                      password=self.cfg.apple_app_password)
+                                      password=self.cfg.apple_app_password,
+                                      timeout=self.cfg.caldav_timeout_seconds)
             if self.cfg.calendar_url:
                 self._cal = caldav.Calendar(client=client, url=self.cfg.calendar_url)
                 return self._cal

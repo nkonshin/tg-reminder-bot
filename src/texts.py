@@ -38,8 +38,9 @@ def ping_text(title: str) -> str:
     return f"Напоминаю: {cap(title)}"
 
 
-def manual_time_prompt() -> str:
-    return "Напиши, когда напомнить — например «завтра в 18» или «в 19:30»."
+def manual_time_prompt(title: str) -> str:
+    return (f"Напиши, когда напомнить про «{cap(title)}» — например «завтра в 18» "
+            "или «в 19:30».")
 
 
 def manual_time_error() -> str:
@@ -52,6 +53,15 @@ def calendar_failure_admin_text(title: str, error: Exception) -> str:
 
 def calendar_delete_failure_admin_text(error: Exception) -> str:
     return f"Не смогла удалить событие из календаря: {error}"
+
+
+def her_unreachable_admin_text(what: str, error: Exception) -> str:
+    return f"Не смогла написать ей ({what}) — личка недоступна: {error}"
+
+
+def undeliverable_admin_text(title: str, failures: int) -> str:
+    return (f"Не удалось доставить напоминание «{title}» ей в личку {failures} раз(а) "
+            "подряд — похоже, личка недоступна. Сняла напоминание с повторов.")
 
 
 def expired_admin_text(title: str, pings: int) -> str:

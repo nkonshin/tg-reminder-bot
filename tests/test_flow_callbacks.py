@@ -87,7 +87,7 @@ async def test_pod_choice_promotes_clarify(deps):
 async def test_manual_time_flow(deps):
     await process_dialog_message("напомни про анализы", deps, NOW)
     await on_callback("manual:1", deps, NOW)
-    assert (await deps.db.get_awaiting_manual()).id == 1
+    assert (await deps.db.get_awaiting_manual(NOW, deps.cfg.manual_time_timeout_minutes)).id == 1
     await on_her_private_text("завтра в 18", deps, NOW)
     r = await deps.db.get(1)
     assert r.status == "pending"
@@ -168,3 +168,47 @@ async def test_manual_after_edit_keeps_original_day(deps):
     r = await deps.db.get(1)
     assert r.status == "pending"
     assert from_iso(r.due_at) == datetime(2026, 7, 25, 9, 0, tzinfo=TZ)
+
+
+# --- "Напишу время" must expire instead of hijacking a later message (finding 5) ---
+
+
+async def test_stale_manual_flag_is_not_hijacked_by_later_message(deps):
+    await process_dialog_message("напомни про анализы", deps, NOW)
+    await on_callback("manual:1", deps, NOW)
+    later = NOW + timedelta(hours=2)  # well past manual_time_timeout_minutes
+    await on_her_private_text("завтра в 18 буду занята", deps, later)
+    r = await deps.db.get(1)
+    assert r.status == "pending_clarify"
+    assert r.due_at is None
+
+
+async def test_manual_flag_still_honored_within_timeout(deps):
+    await process_dialog_message("напомни про анализы", deps, NOW)
+    await on_callback("manual:1", deps, NOW)
+    soon = NOW + timedelta(minutes=5)
+    await on_her_private_text("завтра в 18", deps, soon)
+    r = await deps.db.get(1)
+    assert r.status == "pending"
+    assert from_iso(r.due_at) == datetime(2026, 7, 25, 18, 0, tzinfo=TZ)
+
+
+async def test_manual_prompt_names_the_reminder(deps):
+    await process_dialog_message("напомни про анализы", deps, NOW)
+    await on_callback("manual:1", deps, NOW)
+    assert "анализы" in deps.bot.sent[-1].text.lower()
+
+
+async def test_new_clarify_card_clears_stale_manual_flag(deps):
+    await process_dialog_message("напомни про анализы", deps, NOW)
+    await on_callback("manual:1", deps, NOW)
+    await process_dialog_message("напомни про молоко", deps, NOW)
+    assert await deps.db.get_awaiting_manual(NOW, deps.cfg.manual_time_timeout_minutes) is None
+
+
+async def test_edit_clears_stale_manual_flag_on_other_reminder(deps):
+    await process_dialog_message("напомни про анализы", deps, NOW)
+    await on_callback("manual:1", deps, NOW)
+    await process_dialog_message("напомни завтра в 17 сдать кровь", deps, NOW)
+    await on_callback("edit:2", deps, NOW)
+    assert await deps.db.get_awaiting_manual(NOW, deps.cfg.manual_time_timeout_minutes) is None
