@@ -70,8 +70,12 @@ class Database:
             return Reminder(*row) if row else None
 
     async def add_pending(self, title: str, due: datetime) -> "Reminder":
+        # calendar_pending starts at 1: the row exists before its calendar event
+        # does, so a crash between this INSERT and set_calendar must leave the
+        # reminder visibly in need of repair rather than looking already synced.
         rid = await self._exec(
-            "INSERT INTO reminders (title, due_at, status, created_at) VALUES (?,?,?,?)",
+            "INSERT INTO reminders (title, due_at, status, calendar_pending, created_at) "
+            "VALUES (?,?,?,1,?)",
             (title, to_iso(due), "pending", to_iso(datetime.now(timezone.utc))))
         return await self.get(rid)
 
@@ -88,9 +92,13 @@ class Database:
         await self._exec("UPDATE reminders SET status=? WHERE id=?", (status, rid))
 
     async def promote(self, rid: int, due: datetime) -> None:
+        # calendar_pending=1 for the same reason as in add_pending: the new due
+        # time is persisted before the calendar catches up, so an interruption
+        # in between leaves the row repairable by the scheduler.
         await self._exec(
             "UPDATE reminders SET status='pending', due_at=?, pings_sent=0, "
-            "last_ping_at=NULL, awaiting_manual_time=0 WHERE id=?", (to_iso(due), rid))
+            "last_ping_at=NULL, awaiting_manual_time=0, calendar_pending=1 WHERE id=?",
+            (to_iso(due), rid))
 
     async def set_calendar(self, rid: int, uid: str | None, pending: int) -> None:
         await self._exec("UPDATE reminders SET calendar_uid=?, calendar_pending=? WHERE id=?",

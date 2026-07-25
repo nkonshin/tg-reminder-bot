@@ -168,6 +168,51 @@ async def on_callback(data: str, deps: Deps, now: datetime) -> str:
     return ""
 
 
+async def _retry_calendar_event(r, deps: Deps) -> None:
+    """Repair a reminder whose calendar event is missing: either creation
+    failed earlier, or the process died between the INSERT and set_calendar.
+    A stale uid is deleted first so a retry never orphans the old event."""
+    await _delete_event_if_any(r, deps)
+    uid, pending = await _create_calendar_event(r.title, from_iso(r.due_at), deps)
+    await deps.db.set_calendar(r.id, uid, pending)
+
+
+async def _ping(r, deps: Deps, now: datetime) -> None:
+    await deps.bot.send_message(deps.cfg.her_user_id, texts.ping_text(r.title),
+                                 reply_markup=texts.kb_ping(r.id))
+    await deps.db.record_ping(r.id, now)
+
+
+async def scheduler_tick(deps: Deps, now: datetime) -> None:
+    for r in await deps.db.list_pending():
+        if r.calendar_pending:
+            await _retry_calendar_event(r, deps)
+        if from_iso(r.due_at) > now:
+            continue
+        if r.pings_sent == 0:
+            await _ping(r, deps, now)
+            continue
+        if now - from_iso(r.last_ping_at) < timedelta(minutes=deps.cfg.reping_minutes):
+            continue
+        if r.pings_sent >= 1 + deps.cfg.max_repings:
+            await deps.db.set_status(r.id, "expired")
+            await notify_admin(deps, texts.expired_admin_text(r.title, r.pings_sent))
+        else:
+            await _ping(r, deps, now)
+
+
+async def run_scheduler(deps: Deps) -> None:
+    """Poll loop: all state lives in SQLite, so a restart loses nothing and a
+    failing tick must never kill the loop."""
+    while True:
+        try:
+            await scheduler_tick(deps, now_local(deps.cfg))
+        except Exception as e:
+            log.exception("scheduler tick failed")
+            await notify_admin(deps, texts.scheduler_failure_admin_text(e))
+        await asyncio.sleep(deps.cfg.tick_seconds)
+
+
 async def on_her_private_text(text: str, deps: Deps, now: datetime) -> None:
     r = await deps.db.get_awaiting_manual()
     if r is None:

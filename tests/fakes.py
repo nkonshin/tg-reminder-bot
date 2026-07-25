@@ -13,11 +13,15 @@ class FakeBot:
 class FakeCalendar:
     def __init__(self):
         self.created, self.deleted, self.fail = [], [], False
+        # Monotonic, independent of `created` — tests clear that list to focus
+        # on later events, and a real calendar never reissues a retired uid.
+        self._next_uid = 1
 
     def create_event(self, title, start, end):
         if self.fail:
             raise RuntimeError("caldav down")
-        uid = f"uid-{len(self.created) + 1}"
+        uid = f"uid-{self._next_uid}"
+        self._next_uid += 1
         self.created.append((uid, title, start, end))
         return uid
 

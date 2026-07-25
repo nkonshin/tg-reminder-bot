@@ -54,6 +54,14 @@ def calendar_delete_failure_admin_text(error: Exception) -> str:
     return f"Не смогла удалить событие из календаря: {error}"
 
 
+def expired_admin_text(title: str, pings: int) -> str:
+    return f"Напоминание «{title}» не подтверждено после {pings} пингов"
+
+
+def scheduler_failure_admin_text(error: Exception) -> str:
+    return f"Ошибка планировщика: {error}"
+
+
 def stale_callback_text() -> str:
     return "Это действие сейчас недоступно."
 
