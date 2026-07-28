@@ -37,6 +37,29 @@ def test_morning_hour_kept_as_is():
     assert t == time(8, 0)
 
 
+def test_small_hour_with_explicit_minutes_is_morning():
+    # Реальный случай: «напомни взять экг завтра в 6.40» — имелось в виду утро.
+    # Названные минуты означают, что время продиктовано точно, поэтому
+    # догадка «маленький час = день» здесь не применяется.
+    t, _ = extract_time("завтра в 6.40 взять экг")
+    assert t == time(6, 40)
+
+
+def test_small_hour_with_explicit_minutes_colon_is_morning():
+    t, _ = extract_time("в 6:40 взять экг")
+    assert t == time(6, 40)
+
+
+def test_small_hour_with_zero_minutes_is_morning():
+    t, _ = extract_time("в 5:00 выехать")
+    assert t == time(5, 0)
+
+
+def test_small_hour_with_minutes_and_evening_qualifier_is_pm():
+    t, _ = extract_time("в 6.40 вечера забрать заказ")
+    assert t == time(18, 40)
+
+
 def test_no_time():
     t, spans = extract_time("посмотреть анализы")
     assert t is None and spans == []
@@ -171,9 +194,10 @@ def test_breakfast_word_not_mistaken_for_tomorrow():
 def test_dotted_time_not_mistaken_for_date():
     # "в 6.05" is a time written with a dot (common in ru: "17.30" for 5:30pm),
     # but "6.05" also parses as a valid dd.mm date (6 May). The date regex must
-    # not re-claim digits already consumed by the time match.
+    # not re-claim digits already consumed by the time match. Named minutes
+    # also mean the hour is taken literally, so this is 06:05, not 18:05.
     p = parse_when("в 6.05 разбудить", NOW, CFG)
-    assert p.at == time(18, 5)
+    assert p.at == time(6, 5)
     assert p.day == NOW.date() and p.explicit_date is False
     assert p.title == "разбудить"
 
