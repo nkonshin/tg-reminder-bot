@@ -8,8 +8,9 @@ from dateparser.search import search_dates
 Span = tuple[int, int]
 
 TIME_RE = re.compile(
-    r"\b(?:в|к)\s+(\d{1,2})(?:[:.](\d{2}))?(?:\s*час(?:а|ов|ик(?:а|ов)?)?)?"
-    r"(?:\s+(утра|дня|вечера|ночи))?\b"
+    r"\b(?:(?P<prep>в|к|на)\s+)?(?P<hour>\d{1,2})(?:[:.](?P<minute>\d{2}))?"
+    r"(?:\s*час(?:а|ов|ик(?:а|ов)?)?)?"
+    r"(?:\s+(?P<qual>утра|дня|вечера|ночи))?\b"
 )
 
 # genitive/prepositional-plural noun endings — "в 5 подъездов"/"в 3 магазинах" are counts,
@@ -46,30 +47,38 @@ def _next_word(text: str, pos: int) -> str:
 
 
 def extract_time(text: str) -> tuple[time | None, list[Span]]:
-    m = TIME_RE.search(text)
-    if not m:
-        return None, []
-    hour = int(m.group(1))
-    minute = int(m.group(2) or 0)
-    qual = m.group(3)
-    if hour > 23 or minute > 59:
-        return None, []
-    if qual is None and _next_word(text, m.end()).endswith(COUNTED_NOUN_SUFFIXES):
-        return None, []  # «в 5 подъездов» — это счёт, а не время
-    if qual in ("вечера", "дня") and hour < 12:
-        hour += 12
-    elif qual == "ночи":
-        if hour == 12:
-            hour = 0  # «в 12 ночи» — полночь, а не полдень
-        elif 7 <= hour <= 11:
-            hour += 12  # «в 10 ночи» — это 22:00, а не 10 утра
-    elif qual is None and m.group(2) is None and 1 <= hour <= 6:
-        # «в 2» почти всегда значит 14:00, а не ночь. Но только для круглого
-        # часа: названные минуты («в 6.40») означают, что время продиктовано
-        # точно, и тогда это утро — вечер в таком виде пишут как «18.40» или
-        # «в 6.40 вечера».
-        hour += 12
-    return time(hour, minute), [m.span()]
+    # Перебираем все числа в сообщении, а не только первое: «25 июля в 12» —
+    # время здесь второе по счёту, а первое число вообще часть даты.
+    for m in TIME_RE.finditer(text):
+        hour = int(m.group("hour"))
+        minute = int(m.group("minute") or 0)
+        qual = m.group("qual")
+        prep = m.group("prep")
+        if hour > 23 or minute > 59:
+            continue
+        if prep is None and qual is None:
+            # Голое число без предлога и без «утра/вечера» — не время
+            # («купить 5 яблок»), иначе временем станет любая цифра.
+            continue
+        if prep == "на" and qual == "дня":
+            continue  # «уехать на 3 дня» — это срок, а не 15:00
+        if qual is None and _next_word(text, m.end()).endswith(COUNTED_NOUN_SUFFIXES):
+            continue  # «в 5 подъездов» — это счёт, а не время
+        if qual in ("вечера", "дня") and hour < 12:
+            hour += 12
+        elif qual == "ночи":
+            if hour == 12:
+                hour = 0  # «в 12 ночи» — полночь, а не полдень
+            elif 7 <= hour <= 11:
+                hour += 12  # «в 10 ночи» — это 22:00, а не 10 утра
+        elif qual is None and m.group("minute") is None and 1 <= hour <= 6:
+            # «в 2» почти всегда значит 14:00, а не ночь. Но только для круглого
+            # часа: названные минуты («в 6.40») означают, что время продиктовано
+            # точно, и тогда это утро — вечер в таком виде пишут как «18.40» или
+            # «в 6.40 вечера».
+            hour += 12
+        return time(hour, minute), [m.span()]
+    return None, []
 
 
 def extract_part_of_day(text: str, cfg) -> tuple[time | None, list[Span]]:

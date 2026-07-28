@@ -65,6 +65,34 @@ def test_no_time():
     assert t is None and spans == []
 
 
+# «на 8 утра» и «на завтра» — то, что она реально писала в ответ на переспрос;
+# предлог «на» не понимался, и бот отвечал «не поняла время».
+def test_na_preposition_with_qualifier():
+    t, _ = extract_time("на 8 утра отправить доки")
+    assert t == time(8, 0)
+
+
+def test_na_preposition_with_explicit_minutes():
+    t, _ = extract_time("на 18:30 позвонить")
+    assert t == time(18, 30)
+
+
+def test_qualifier_without_any_preposition():
+    t, _ = extract_time("8 утра отправить доки")
+    assert t == time(8, 0)
+
+
+def test_bare_number_without_preposition_is_not_a_time():
+    t, spans = extract_time("купить 5 яблок")
+    assert t is None and spans == []
+
+
+def test_na_with_days_is_a_duration_not_a_time():
+    # «уехать на 3 дня» — это срок, а не 15:00
+    t, spans = extract_time("уехать на 3 дня")
+    assert t is None and spans == []
+
+
 def test_midnight_with_night_qualifier():
     t, _ = extract_time("в 12 ночи принять таблетку")
     assert t == time(0, 0)
