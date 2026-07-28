@@ -18,7 +18,10 @@ class Config(BaseSettings):
     caldav_url: str = "https://caldav.icloud.com"
     calendar_name: str = "Домашний"
     calendar_url: str = ""
-    caldav_timeout_seconds: int = 15
+    # CalendarClient retries once on failure, so a call costs at most twice
+    # this. Kept well under Telegram's ~15s callback-query deadline: a button
+    # press that waits on CalDAV must still be answerable afterwards.
+    caldav_timeout_seconds: int = 6
 
     trigger_stems: str = "напомн,не забудь,поставь напоминание"
     morning_hour: int = 9

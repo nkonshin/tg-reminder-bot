@@ -1,3 +1,4 @@
+import logging
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -5,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 import caldav
 from caldav.lib.error import NotFoundError
 from icalendar import Alarm, Calendar, Event
+
+log = logging.getLogger(__name__)
 
 
 def build_event_ics(uid: str, title: str, start: datetime, end: datetime) -> bytes:
@@ -53,13 +56,38 @@ class CalendarClient:
                     return self._cal
             raise LookupError(f"Calendar '{self.cfg.calendar_name}' not found")
 
+    def _reconnect(self) -> None:
+        """Drop the cached calendar so the next _calendar() dials afresh."""
+        with self._lock:
+            self._cal = None
+
+    def _retrying(self, op):
+        """Run op(), and on failure reconnect and run it once more.
+
+        caldav pools HTTP keep-alive sockets. iCloud drops idle ones without
+        telling us, so the first call after a quiet spell writes into a dead
+        socket and hangs until the read timeout instead of failing fast — the
+        one failure mode observed in practice. The retry goes out over a new
+        connection, which costs ~0.1s. NotFoundError is a real answer, not a
+        transport failure, so it is never retried."""
+        try:
+            return op()
+        except NotFoundError:
+            raise
+        except Exception:
+            log.warning("caldav call failed, reconnecting and retrying once",
+                        exc_info=True)
+            self._reconnect()
+            return op()
+
     def create_event(self, title: str, start: datetime, end: datetime) -> str:
         uid = str(uuid.uuid4())
-        self._calendar().add_event(build_event_ics(uid, title, start, end).decode())
+        ics = build_event_ics(uid, title, start, end).decode()
+        self._retrying(lambda: self._calendar().add_event(ics))
         return uid
 
     def delete_event(self, uid: str) -> None:
         try:
-            self._calendar().get_event_by_uid(uid).delete()
+            self._retrying(lambda: self._calendar().get_event_by_uid(uid).delete())
         except NotFoundError:
             pass

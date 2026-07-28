@@ -1,9 +1,14 @@
+import logging
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from src import texts
 from src.flow import Deps, now_local, on_callback, on_her_private_text, process_dialog_message
+
+log = logging.getLogger(__name__)
 
 router = Router(name="reminder-bot")
 
@@ -39,7 +44,14 @@ async def callbacks(cb: CallbackQuery, deps: Deps) -> None:
         await cb.answer()
         return
     answer = await on_callback(cb.data, deps, now_local(deps.cfg))
-    await cb.answer(answer or None)
+    try:
+        await cb.answer(answer or None)
+    except TelegramBadRequest:
+        # Telegram expires a callback query after ~15s. If on_callback spent
+        # that long (a stalled CalDAV write is the realistic cause) the work
+        # above is still done and persisted — only the toast is lost, so this
+        # must not surface as an unhandled error.
+        log.warning("callback query expired before it could be answered")
 
 
 @router.message(F.chat.type == "private", F.text)

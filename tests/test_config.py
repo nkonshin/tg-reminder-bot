@@ -18,7 +18,7 @@ def test_defaults():
     assert cfg.manual_time_timeout_minutes == 30
     assert cfg.calendar_retry_base_minutes == 2
     assert cfg.calendar_retry_max_minutes == 30
-    assert cfg.caldav_timeout_seconds == 15
+    assert cfg.caldav_timeout_seconds == 6
 
 
 def test_dialog_chat_id_overridable():
