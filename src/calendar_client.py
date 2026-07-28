@@ -86,8 +86,37 @@ class CalendarClient:
         self._retrying(lambda: self._calendar().add_event(ics))
         return uid
 
+    def _event_url(self, uid: str) -> str:
+        """Where caldav puts an event it creates: <calendar>/<uid>.ics."""
+        return f"{str(self._calendar().url).rstrip('/')}/{uid}.ics"
+
+    def _find_by_listing(self, uid: str):
+        """Last resort if the event does not sit at its expected URL. events()
+        returns the calendar data inline, so this is one request, not one per
+        event."""
+        for event in self._calendar().events():
+            if uid in (event.data or ""):
+                return event
+        return None
+
     def delete_event(self, uid: str) -> None:
+        """Delete by the event's own URL.
+
+        Never search by UID: caldav implements that as a calendar-query REPORT,
+        and iCloud rejects it with 412 Precondition Failed every single time
+        (reproduced 3/3 against the live account). That silently left the old
+        event in her calendar on every «Отменить»/«Изменить время»/snooze and
+        alerted the admin instead."""
         try:
-            self._retrying(lambda: self._calendar().get_event_by_uid(uid).delete())
+            self._retrying(lambda: caldav.Event(client=self._calendar().client,
+                                                url=self._event_url(uid)).delete())
+            return
         except NotFoundError:
-            pass
+            return  # уже удалено — удалять нечего
+        except Exception as e:
+            log.info("delete by url failed (%s), looking the event up in the calendar",
+                     type(e).__name__)
+        event = self._retrying(lambda: self._find_by_listing(uid))
+        if event is None:
+            return  # события в календаре нет: скорее всего, удалила вручную
+        self._retrying(event.delete)
