@@ -37,15 +37,17 @@ def _body(message: StoredMessage) -> str:
     return kind_label(message.media_kind)
 
 
-def edited_text(name: str, before: str | None, after: str | None,
+def edited_text(name: str | None, before: str | None, after: str | None,
                 when_local: datetime) -> str:
-    return (f"✏️ {name} изменил(а) сообщение в {_hm(when_local)}\n\n"
+    who = name or "Собеседник"
+    return (f"✏️ {who} изменил(а) сообщение в {_hm(when_local)}\n\n"
             f"Было: «{before or ''}»\n"
             f"Стало: «{after or ''}»")
 
 
-def deleted_text(name: str, message: StoredMessage, when_local: datetime) -> str:
-    return f"🗑 {name} удалил(а) в {_hm(when_local)}: {_body(message)}"
+def deleted_text(name: str | None, message: StoredMessage, when_local: datetime) -> str:
+    who = name or "Собеседник"
+    return f"🗑 {who} удалил(а) в {_hm(when_local)}: {_body(message)}"
 
 
 def deleted_unknown_text(name: str | None, when_local: datetime) -> str:

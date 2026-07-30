@@ -36,6 +36,16 @@ def test_deleted_unknown_says_content_was_not_stored():
     assert "не сохранено" in t
 
 
+def test_edited_text_falls_back_to_a_generic_name_when_none_is_known():
+    t = notify.edited_text(None, "было", "стало", WHEN)
+    assert "Собеседник" in t
+
+
+def test_deleted_text_falls_back_to_a_generic_name_when_none_is_known():
+    t = notify.deleted_text(None, a_message(), WHEN)
+    assert "Собеседник" in t
+
+
 def test_format_bytes_is_readable():
     assert notify.format_bytes(512) == "512 Б"
     assert notify.format_bytes(2048) == "2.0 КБ"
