@@ -173,7 +173,7 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
         author_id = stored.from_user_id if stored else None
         if not _authored_by_owner(owner, author_id):
             reportable.append(stored)
-    if len(reportable) > notify.BULK_THRESHOLD:
+    if len(reportable) >= notify.BULK_THRESHOLD:
         # "Clear history" arrives as one event with every id in it. One send
         # per id makes Telegram 429 most of the burst, and since nothing
         # retries, those deletions are simply never reported.

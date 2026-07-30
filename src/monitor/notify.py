@@ -17,9 +17,12 @@ BODY_LIMIT = 3000
 # inside it so one long message cannot crowd out the rest of the list.
 BULK_LIMIT = 3000
 BULK_LINE_LIMIT = 200
-# More deletions than this in one event get a single summary instead of one
-# outbound message each -- "clear history" hands over hundreds of ids at once.
-BULK_THRESHOLD = 5
+# This many deletions or more in one event get a single summary instead of
+# one outbound message each -- "clear history" hands over hundreds of ids at
+# once. Kept high enough that an ordinary multi-message delete (e.g. a
+# several-photo album) still gets each message its own notification and
+# media attachment, rather than the summary's text-only, clipped treatment.
+BULK_THRESHOLD = 20
 
 TRUNCATED_MARK = " […обрезано]"
 

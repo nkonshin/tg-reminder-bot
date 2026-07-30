@@ -1,10 +1,11 @@
+import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from src.config import Config
-from src.monitor import capture
+from src.monitor import capture, notify
 from src.monitor.store import MonitorStore
 from tests.fakes import FakeBot
 
@@ -281,6 +282,45 @@ async def test_a_small_delete_still_reports_each_message_separately(deps):
     await capture.on_deleted_business_messages(event, deps, NOW)
     assert len(deps.bot.sent) == 2
     assert "секрет 1" in deps.bot.sent[0].text and "секрет 2" in deps.bot.sent[1].text
+
+
+async def test_a_delete_just_under_the_bulk_threshold_reports_each_message_individually(deps):
+    # BULK_THRESHOLD exists to defuse a "clear history" flood, not to catch
+    # an ordinary multi-message delete (e.g. a 7-photo album). Below it every
+    # message must keep its own notification, media attachment included --
+    # not the summary's `— фото`-only, no-attachment, 200-char-clipped line.
+    owner = await connect(deps)
+    ids = list(range(1, notify.BULK_THRESHOLD))  # one short of the threshold
+    for message_id in ids:
+        await deps.store.record_message(owner.id, -1, message_id, 300, "Собеседник",
+                                        f"сообщение {message_id}", None, None, NOW)
+    file_rel = f"{owner.id}/-1/1.jpg"
+    abs_path = os.path.join(deps.cfg.monitor_media_dir, file_rel)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    with open(abs_path, "wb") as fh:
+        fh.write(b"x")
+    await deps.store.set_media_path(owner.id, -1, 1, file_rel)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=ids)
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) == len(ids), "every message below the threshold gets its own send"
+    assert len(deps.bot.documents) == 1, "the media attachment must still ride along"
+    assert deps.bot.documents[0].path.endswith("1.jpg")
+
+
+async def test_a_delete_at_the_bulk_threshold_sends_a_single_summary(deps):
+    owner = await connect(deps)
+    ids = list(range(1, notify.BULK_THRESHOLD + 1))  # exactly at the threshold
+    for message_id in ids:
+        await deps.store.record_message(owner.id, -1, message_id, 300, "Собеседник",
+                                        f"сообщение {message_id}", None, None, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=ids)
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) == 1, "at the threshold, one summary replaces the individual sends"
+    assert str(notify.BULK_THRESHOLD) in deps.bot.sent[0].text
 
 
 async def test_a_long_deleted_message_is_delivered_within_the_telegram_limit(deps):
