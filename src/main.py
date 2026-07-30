@@ -16,6 +16,18 @@ from src.monitor.store import MonitorStore
 log = logging.getLogger(__name__)
 
 
+def _start_background_tasks(deps: Deps, monitor: MonitorDeps, cfg: Config) -> list:
+    """The scheduler always runs; the sweeper only when the monitor itself is
+    switched on. It deletes rows and unlinks media files past their retention
+    window, so leaving it running with monitor_enabled=False would keep
+    pruning the archive even though the feature that's supposed to be "off"
+    is meant to do nothing."""
+    tasks = [asyncio.create_task(run_scheduler(deps))]
+    if cfg.monitor_enabled:
+        tasks.append(asyncio.create_task(run_sweeper(monitor)))
+    return tasks
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,15 +47,14 @@ async def main() -> None:
     dp.include_router(monitor_router)   # first: it filters adm: callbacks
     dp.include_router(router)
 
-    scheduler = asyncio.create_task(run_scheduler(deps))
-    sweeper = asyncio.create_task(run_sweeper(monitor))
+    background_tasks = _start_background_tasks(deps, monitor, cfg)
     try:
         log.info("starting polling")
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
-        scheduler.cancel()
-        sweeper.cancel()
-        await asyncio.gather(scheduler, sweeper, return_exceptions=True)
+        for task in background_tasks:
+            task.cancel()
+        await asyncio.gather(*background_tasks, return_exceptions=True)
         await bot.session.close()
 
 

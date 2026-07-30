@@ -90,6 +90,12 @@ async def admin_callback(cb: CallbackQuery, monitor: capture.MonitorDeps) -> Non
     if screen is None:
         return
     text, kb = screen
+    if not isinstance(cb.message, Message):
+        # Telegram represents a callback on a message older than ~48h as an
+        # InaccessibleMessage stub -- it has no edit_text at all (it doesn't
+        # even subclass Message). The callback was already answered above;
+        # there's simply nothing left here to redraw.
+        return
     try:
         await cb.message.edit_text(text, reply_markup=kb)
     except TelegramBadRequest:
