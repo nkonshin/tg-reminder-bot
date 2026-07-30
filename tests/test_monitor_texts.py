@@ -89,6 +89,18 @@ def test_as_document_wraps_a_path_for_upload():
     assert isinstance(notify.as_document("/tmp/x.tar.gz"), FSInputFile)
 
 
+def test_owners_screen_states_the_global_switch_and_every_flag():
+    owner = an_owner(owner_name="Первый", monitor_enabled=0, mirror_to_admin=1)
+    t = notify.admin_owners_text([owner], monitor_enabled=True)
+    assert "MONITOR_ENABLED" in t and "включён" in t
+    assert "Первый" in t and "на паузе" in t and "вкл" in t
+
+
+def test_retention_screen_states_that_it_applies_to_all_connections():
+    t = notify.admin_retention_text(30, owners_count=2)
+    assert "всех подключений" in t and "2" in t
+
+
 def test_format_bytes_is_readable():
     assert notify.format_bytes(512) == "512 Б"
     assert notify.format_bytes(2048) == "2.0 КБ"
@@ -99,7 +111,8 @@ def test_every_admin_button_uses_the_adm_prefix():
     owner = an_owner()
     for kb in (notify.kb_admin_main(), notify.kb_admin_storage(),
                notify.kb_admin_retention(), notify.kb_admin_export(),
-               notify.kb_admin_media(owner), notify.kb_admin_owners([owner])):
+               notify.kb_admin_media(owner), notify.kb_admin_media_owners([owner]),
+               notify.kb_admin_owners([owner])):
         for row in kb.inline_keyboard:
             for b in row:
                 assert b.callback_data.startswith("adm:"), b.callback_data

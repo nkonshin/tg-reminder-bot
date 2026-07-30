@@ -8,6 +8,16 @@ from src.monitor.store import TOGGLEABLE
 
 log = logging.getLogger(__name__)
 
+# Toggles that belong to the Мониторинг screen; everything else in TOGGLEABLE
+# is a media-download switch and redraws the Медиа screen instead.
+OWNER_SCREEN_FIELDS = ("monitor_enabled", "mirror_to_admin")
+
+# A negative retention makes the sweep's cutoff a moment in the FUTURE, so the
+# next nightly run deletes the whole journal. 3650 days is ten years, well past
+# anything the panel offers and far short of overflowing timedelta.
+RETENTION_MIN_DAYS = 0
+RETENTION_MAX_DAYS = 3650
+
 
 def _is_admin(deps, user_id: int) -> bool:
     return user_id == deps.cfg.admin_user_id
@@ -23,13 +33,12 @@ def _parse_int(raw: str) -> int | None:
 
 async def _main_screen(deps):
     owners = await deps.store.list_owners()
-    monitor_on = deps.cfg.monitor_enabled and any(o.monitor_enabled for o in owners)
+    # With no connections yet there is nothing to AND against: any() over an
+    # empty list is False, so the first /admin after a deploy reported
+    # "Мониторинг: выключен" while MONITOR_ENABLED was 1. Report the config.
+    monitor_on = bool(deps.cfg.monitor_enabled) and (
+        any(o.monitor_enabled for o in owners) if owners else True)
     return notify.admin_menu_text(len(owners), monitor_on), notify.kb_admin_main()
-
-
-async def _first_owner(deps):
-    owners = await deps.store.list_owners()
-    return owners[0] if owners else None
 
 
 async def open_panel(deps, user_id: int):
@@ -54,7 +63,16 @@ async def _storage_screen(deps, now):
 
 async def _owners_screen(deps):
     owners = await deps.store.list_owners()
-    return notify.admin_owners_text(owners), notify.kb_admin_owners(owners)
+    return (notify.admin_owners_text(owners, bool(deps.cfg.monitor_enabled)),
+            notify.kb_admin_owners(owners))
+
+
+async def _media_screen(deps, owner, owners_count: int):
+    """With more than one connection the media toggles are per-owner, so the
+    screen has to name whose it is showing and lead back to the picker."""
+    back = "adm:media" if owners_count > 1 else "adm:main"
+    whose = owner.owner_name if owners_count > 1 else None
+    return notify.admin_media_text(whose), notify.kb_admin_media(owner, back)
 
 
 async def handle_callback(data: str, deps, user_id: int, now):
@@ -68,39 +86,41 @@ async def handle_callback(data: str, deps, user_id: int, now):
         return await _main_screen(deps)
 
     if action == "media":
-        owner = await _first_owner(deps)
-        if owner is None:
+        owners = await deps.store.list_owners()
+        if not owners:
             return await _main_screen(deps)
-        return notify.admin_media_text(), notify.kb_admin_media(owner)
+        if len(parts) == 3:
+            owner_id = _parse_int(parts[2])
+            owner = (await deps.store.get_owner_by_id(owner_id)
+                     if owner_id is not None else None)
+            if owner is None:
+                return None
+            return await _media_screen(deps, owner, len(owners))
+        if len(owners) > 1:
+            return notify.admin_media_picker_text(), notify.kb_admin_media_owners(owners)
+        return await _media_screen(deps, owners[0], 1)
 
     if action == "storage":
         return await _storage_screen(deps, now)
 
     if action == "retention":
+        # Unlike медиа and мониторинг, this one deliberately applies to every
+        # connection at once; the screen text says so.
+        owners = await deps.store.list_owners()
         if len(parts) == 2:
-            owner = await _first_owner(deps)
-            days = (owner.retention_days if owner and owner.retention_days
+            days = (owners[0].retention_days
+                    if owners and owners[0].retention_days is not None
                     else deps.cfg.monitor_retention_days)
-            return notify.admin_retention_text(days), notify.kb_admin_retention()
+            return (notify.admin_retention_text(days, len(owners)),
+                    notify.kb_admin_retention())
         days = _parse_int(parts[2])
-        if days is None:
+        if days is None or not RETENTION_MIN_DAYS <= days <= RETENTION_MAX_DAYS:
             return None
-        for owner in await deps.store.list_owners():
+        for owner in owners:
             await deps.store.set_retention_days(owner.id, days)
-        return notify.admin_retention_text(days), notify.kb_admin_retention()
+        return notify.admin_retention_text(days, len(owners)), notify.kb_admin_retention()
 
     if action == "owners":
-        return await _owners_screen(deps)
-
-    if action == "mirror" and len(parts) == 3:
-        owner_id = _parse_int(parts[2])
-        if owner_id is None:
-            return None
-        owner = await deps.store.get_owner_by_id(owner_id)
-        if owner is None:
-            return None
-        await deps.store.set_owner_flag(owner.id, "mirror_to_admin",
-                                        0 if owner.mirror_to_admin else 1)
         return await _owners_screen(deps)
 
     if action == "toggle" and len(parts) == 4:
@@ -111,8 +131,11 @@ async def handle_callback(data: str, deps, user_id: int, now):
         if owner is None:
             return None
         await deps.store.set_owner_flag(owner_id, field, 0 if getattr(owner, field) else 1)
+        if field in OWNER_SCREEN_FIELDS:
+            return await _owners_screen(deps)
+        owners = await deps.store.list_owners()
         owner = await deps.store.get_owner_by_id(owner_id)
-        return notify.admin_media_text(), notify.kb_admin_media(owner)
+        return await _media_screen(deps, owner, len(owners))
 
     if action == "export":
         if len(parts) == 2:

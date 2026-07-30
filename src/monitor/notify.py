@@ -137,9 +137,15 @@ def admin_menu_text(owners_count: int, monitor_on: bool) -> str:
             f"Подключений: {owners_count}")
 
 
-def admin_media_text() -> str:
-    return ("Что сохранять помимо текста. Метаданные пишутся всегда — "
+def admin_media_text(owner_name: str | None = None) -> str:
+    whose = f" — {owner_name}" if owner_name else ""
+    return (f"Что сохранять помимо текста{whose}. Метаданные пишутся всегда — "
             "выключенный тип означает, что не скачивается сам файл.")
+
+
+def admin_media_picker_text() -> str:
+    return ("Подключений несколько, а тумблеры медиа у каждого свои. "
+            "Чьи настраиваем?")
 
 
 def admin_storage_text(db_bytes: int, media_bytes: int, total: dict,
@@ -161,15 +167,26 @@ def admin_storage_text(db_bytes: int, media_bytes: int, total: dict,
     return "\n".join(lines)
 
 
-def admin_retention_text(days: int) -> str:
+def admin_retention_text(days: int, owners_count: int = 0) -> str:
+    # Spelled out because the three screens do three different things: медиа
+    # and мониторинг act on one connection, ретеншен on all of them at once.
     return (f"Сейчас на сервере хранится {days} дн.\n"
+            f"Кнопка ниже меняет срок сразу у всех подключений ({owners_count}).\n"
             "Локальный архив на Mac это не затрагивает — там история копится целиком.")
 
 
-def admin_owners_text(owners) -> str:
-    rows = [f"{o.owner_name or o.owner_user_id} — "
-            f"{'активно' if o.is_enabled else 'отключено'}" for o in owners]
-    return "Подключения\n\n" + ("\n".join(rows) if rows else "пока никого")
+def admin_owners_text(owners, monitor_enabled: bool) -> str:
+    state = "включён" if monitor_enabled else "выключен"
+    head = ("Мониторинг\n\n"
+            f"Глобально (MONITOR_ENABLED): {state} — при выключенном не работает "
+            "ничего, независимо от тумблеров ниже.")
+    if not owners:
+        return head + "\n\nПодключений пока нет."
+    rows = [f"{o.owner_name or o.owner_user_id}: "
+            f"{'подключено' if o.is_enabled else 'отключено Telegram'}, "
+            f"журнал {'ведётся' if o.monitor_enabled else 'на паузе'}, "
+            f"дубли админу {'вкл' if o.mirror_to_admin else 'выкл'}" for o in owners]
+    return head + "\n\n" + "\n".join(rows)
 
 
 def admin_export_text() -> str:
@@ -177,17 +194,25 @@ def admin_export_text() -> str:
             "Telegram, разобью на части.")
 
 
-def kb_admin_media(owner) -> InlineKeyboardMarkup:
-    def mark(field: str, label: str) -> tuple[str, str]:
-        on = "✅" if getattr(owner, field) else "☐"
-        return f"{on} {label}", f"adm:toggle:{owner.id}:{field}"
+def _toggle(owner, field: str, label: str) -> tuple[str, str]:
+    on = "✅" if getattr(owner, field) else "☐"
+    return f"{on} {label}", f"adm:toggle:{owner.id}:{field}"
 
+
+def kb_admin_media(owner, back: str = "adm:main") -> InlineKeyboardMarkup:
     return _kb([
-        [mark("log_photo", "Фото"), mark("log_video", "Видео")],
-        [mark("log_video_note", "Кружки"), mark("log_voice", "Голосовые")],
-        [mark("log_document", "Документы")],
-        [("Назад", "adm:main")],
+        [_toggle(owner, "log_photo", "Фото"), _toggle(owner, "log_video", "Видео")],
+        [_toggle(owner, "log_video_note", "Кружки"),
+         _toggle(owner, "log_voice", "Голосовые")],
+        [_toggle(owner, "log_document", "Документы")],
+        [("Назад", back)],
     ])
+
+
+def kb_admin_media_owners(owners) -> InlineKeyboardMarkup:
+    rows = [[(str(o.owner_name or o.owner_user_id), f"adm:media:{o.id}")] for o in owners]
+    rows.append([("Назад", "adm:main")])
+    return _kb(rows)
 
 
 def kb_admin_storage() -> InlineKeyboardMarkup:
@@ -203,11 +228,13 @@ def kb_admin_retention() -> InlineKeyboardMarkup:
 
 
 def kb_admin_owners(owners) -> InlineKeyboardMarkup:
+    """One row per connection with both of its switches: the per-owner
+    monitoring pause the spec asks for, and the mirror-to-admin toggle."""
     rows = []
     for o in owners:
-        mark = "✅" if o.mirror_to_admin else "☐"
-        rows.append([(f"{mark} дублировать: {o.owner_name or o.owner_user_id}",
-                      f"adm:mirror:{o.id}")])
+        whose = o.owner_name or o.owner_user_id
+        rows.append([_toggle(o, "monitor_enabled", f"журнал: {whose}")])
+        rows.append([_toggle(o, "mirror_to_admin", f"дубли админу: {whose}")])
     rows.append([("Назад", "adm:main")])
     return _kb(rows)
 
