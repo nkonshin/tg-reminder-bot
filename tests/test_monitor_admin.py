@@ -99,3 +99,17 @@ async def test_screens_do_not_crash_with_zero_owners(empty_deps):
                  "adm:owners", "adm:export"):
         result = await admin.handle_callback(data, empty_deps, 200, NOW)
         assert result is not None
+
+
+async def test_toggle_with_a_non_numeric_owner_id_is_ignored(deps):
+    owner = (await deps.store.list_owners())[0]
+    assert await admin.handle_callback("adm:toggle:abc:log_photo", deps, 200, NOW) is None
+    assert (await deps.store.get_owner_by_id(owner.id)).log_photo == 0
+
+
+async def test_retention_with_a_non_numeric_value_is_ignored(deps):
+    assert await admin.handle_callback("adm:retention:notanumber", deps, 200, NOW) is None
+
+
+async def test_mirror_with_a_non_numeric_owner_id_is_ignored(deps):
+    assert await admin.handle_callback("adm:mirror:abc", deps, 200, NOW) is None

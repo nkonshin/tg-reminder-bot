@@ -12,6 +12,14 @@ def _is_admin(deps, user_id: int) -> bool:
     return user_id == deps.cfg.admin_user_id
 
 
+def _parse_int(raw: str) -> int | None:
+    """Parse a callback-data numeric segment, tolerating malformed input."""
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 async def _main_screen(deps):
     owners = await deps.store.list_owners()
     monitor_on = deps.cfg.monitor_enabled and any(o.monitor_enabled for o in owners)
@@ -70,7 +78,9 @@ async def handle_callback(data: str, deps, user_id: int, now):
             days = (owner.retention_days if owner and owner.retention_days
                     else deps.cfg.monitor_retention_days)
             return notify.admin_retention_text(days), notify.kb_admin_retention()
-        days = int(parts[2])
+        days = _parse_int(parts[2])
+        if days is None:
+            return None
         for owner in await deps.store.list_owners():
             await deps.store.set_retention_days(owner.id, days)
         return notify.admin_retention_text(days), notify.kb_admin_retention()
@@ -79,7 +89,10 @@ async def handle_callback(data: str, deps, user_id: int, now):
         return await _owners_screen(deps)
 
     if action == "mirror" and len(parts) == 3:
-        owner = await deps.store.get_owner_by_id(int(parts[2]))
+        owner_id = _parse_int(parts[2])
+        if owner_id is None:
+            return None
+        owner = await deps.store.get_owner_by_id(owner_id)
         if owner is None:
             return None
         await deps.store.set_owner_flag(owner.id, "mirror_to_admin",
@@ -87,8 +100,8 @@ async def handle_callback(data: str, deps, user_id: int, now):
         return await _owners_screen(deps)
 
     if action == "toggle" and len(parts) == 4:
-        owner_id, field = int(parts[2]), parts[3]
-        if field not in TOGGLEABLE:
+        owner_id, field = _parse_int(parts[2]), parts[3]
+        if owner_id is None or field not in TOGGLEABLE:
             return None
         owner = await deps.store.get_owner_by_id(owner_id)
         if owner is None:
