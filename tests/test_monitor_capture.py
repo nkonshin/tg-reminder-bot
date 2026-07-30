@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -175,6 +175,137 @@ async def test_edit_of_a_pre_connection_message_also_captures_its_media(deps):
     assert stored.media_kind == "voice"
     assert stored.media_path == f"{owner.id}/-1/5.ogg"
     assert deps.bot.downloads == ["v1"]
+
+
+async def test_a_deleted_media_file_is_re_shared_with_the_notification(deps):
+    # The spec promises the downloaded file back when the message is deleted --
+    # the only moment it still exists anywhere. Passing the path as a bare str
+    # makes aiogram send it as a file_id, so Telegram rejects it and nobody
+    # ever gets the file.
+    owner = await connect(deps)
+    await deps.store.set_owner_flag(owner.id, "log_voice", 1)
+    msg = a_message(text=None, voice=SimpleNamespace(file_id="v1"))
+    await capture.on_business_message(msg, deps, NOW)
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.documents) == 1
+    assert deps.bot.documents[0].path.endswith("5.ogg")
+    assert deps.bot.documents[0].chat_id == 100
+
+
+async def test_a_long_edit_is_delivered_within_the_telegram_limit(deps):
+    # 2500 chars before + 2500 after is 5056 chars of notification, past
+    # Telegram's 4096 cap: the send raises, notify_owner swallows it, and the
+    # owner is never told the edit happened at all.
+    owner = await connect(deps)
+    before = "а" * 2500
+    after = "б" * 2500
+    await capture.on_business_message(a_message(text=before), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text=after), deps, NOW)
+    assert len(deps.bot.sent) == 1, "the owner must be told about a long edit"
+    assert len(deps.bot.sent[0].text) <= 4096
+    assert "а" in deps.bot.sent[0].text and "б" in deps.bot.sent[0].text
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == after
+
+
+async def test_an_undelivered_edit_keeps_the_stored_original(deps):
+    # An edit destroys the original on Telegram's side; this journal is the
+    # only surviving copy. Overwriting it before the owner has actually been
+    # told loses the pre-edit text from the server AND from every future
+    # backup, with nobody any the wiser.
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="оригинал"), deps, NOW)
+    deps.bot.fail_chat_ids.add(owner.owner_user_id)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="подмена"), deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.text == "оригинал"
+    assert stored.edited_at is None
+
+
+async def test_the_owners_own_edit_is_not_reported_back_to_them(deps):
+    # Business updates carry the owner's own messages too (src/handlers.py
+    # relies on that). Journal them, but do not tell someone their own typo
+    # fix was "изменил(а) сообщение".
+    owner = await connect(deps)
+    mine = dict(user_id=100, name="Владелец")
+    await capture.on_business_message(a_message(text="было", **mine), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало", **mine), deps, NOW)
+    assert deps.bot.sent == []
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "стало"
+
+
+async def test_the_owners_own_deletion_is_not_reported_back_to_them(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(
+        a_message(text="моё", user_id=100, name="Владелец"), deps, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert deps.bot.sent == []
+    assert (await deps.store.get_message(owner.id, -1, 5)).deleted_at is not None
+
+
+async def test_a_bulk_delete_sends_a_bounded_number_of_messages(deps):
+    # "Clear history" hands over every id at once. One send per id 429s most
+    # of the burst; every swallowed failure is a deletion the owner never
+    # hears about, because nothing retries.
+    owner = await connect(deps)
+    ids = list(range(1, 201))
+    for message_id in ids:
+        await deps.store.record_message(owner.id, -1, message_id, 300, "Собеседник",
+                                        f"сообщение {message_id}", None, None, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=ids)
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) <= 3, f"{len(deps.bot.sent)} sends for one delete event"
+    assert all(len(m.text) <= 4096 for m in deps.bot.sent)
+    assert "200" in deps.bot.sent[0].text  # says how many went
+    assert (await deps.store.get_message(owner.id, -1, 1)).deleted_at is not None
+    assert (await deps.store.get_message(owner.id, -1, 200)).deleted_at is not None
+
+
+async def test_a_small_delete_still_reports_each_message_separately(deps):
+    owner = await connect(deps)
+    for message_id in (1, 2):
+        await deps.store.record_message(owner.id, -1, message_id, 300, "Собеседник",
+                                        f"секрет {message_id}", None, None, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[1, 2])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) == 2
+    assert "секрет 1" in deps.bot.sent[0].text and "секрет 2" in deps.bot.sent[1].text
+
+
+async def test_a_long_deleted_message_is_delivered_within_the_telegram_limit(deps):
+    owner = await connect(deps)
+    await deps.store.record_message(owner.id, -1, 1, 300, "Собеседник", "я" * 5000,
+                                    None, None, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[1])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) == 1
+    assert len(deps.bot.sent[0].text) <= 4096
+
+
+async def test_sent_at_uses_the_message_date_not_the_receive_time(deps):
+    # An edit of a pre-connection message is captured for the first time here;
+    # dating it "now" restarts its retention clock and misfiles it in the
+    # archive by however long ago it was actually sent.
+    owner = await connect(deps)
+    sent_at = NOW - timedelta(days=3)
+    msg = a_message(text="давнее")
+    msg.date = sent_at
+    await capture.on_edited_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.sent_at.startswith("2026-07-27")
 
 
 async def test_a_broken_store_does_not_crash_the_connection_handler(deps, monkeypatch):

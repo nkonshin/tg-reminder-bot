@@ -55,6 +55,40 @@ def test_deleted_text_falls_back_to_a_generic_name_when_none_is_known():
     assert "Собеседник" in t
 
 
+def test_edited_text_stays_inside_the_telegram_limit():
+    # Both versions travel in one message; 2500 + 2500 chars is 5056, which
+    # sendMessage rejects outright -- so the owner would hear nothing at all.
+    t = notify.edited_text("Кто-то", "а" * 2500, "б" * 2500, WHEN)
+    assert len(t) <= notify.MESSAGE_LIMIT
+    assert notify.TRUNCATED_MARK in t
+    assert "а" in t and "б" in t
+
+
+def test_deleted_text_stays_inside_the_telegram_limit():
+    t = notify.deleted_text("Кто-то", a_message(text="я" * 9000), WHEN)
+    assert len(t) <= notify.MESSAGE_LIMIT
+    assert notify.TRUNCATED_MARK in t
+
+
+def test_bulk_delete_summary_counts_everything_and_fits():
+    messages = [a_message(message_id=i, text=f"сообщение {i}") for i in range(300)]
+    t = notify.deleted_bulk_text(messages, WHEN)
+    assert len(t) <= notify.MESSAGE_LIMIT
+    assert "300" in t
+    assert "и ещё" in t  # the tail says how many were not listed
+
+
+def test_bulk_delete_summary_reports_ids_it_never_stored():
+    t = notify.deleted_bulk_text([None, None], WHEN)
+    assert "не сохранено" in t
+
+
+def test_as_document_wraps_a_path_for_upload():
+    # A bare str is sent as a file_id, not uploaded -- see tests/fakes.py.
+    from aiogram.types import FSInputFile
+    assert isinstance(notify.as_document("/tmp/x.tar.gz"), FSInputFile)
+
+
 def test_format_bytes_is_readable():
     assert notify.format_bytes(512) == "512 Б"
     assert notify.format_bytes(2048) == "2.0 КБ"

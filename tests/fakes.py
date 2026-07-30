@@ -1,5 +1,11 @@
+import os
 import threading
 from types import SimpleNamespace
+
+# Telegram rejects a sendMessage whose text is longer than this, and aiogram
+# surfaces that as TelegramBadRequest("message is too long"). The fake enforces
+# it so a notification that only overflows in production cannot pass here.
+TELEGRAM_MESSAGE_LIMIT = 4096
 
 
 class FakeBot:
@@ -33,6 +39,10 @@ class FakeBot:
     async def send_message(self, chat_id, text, reply_markup=None):
         if chat_id in self.fail_chat_ids or (self.fail_predicate and self.fail_predicate(chat_id, text)):
             raise RuntimeError(self.fail_message)
+        if len(text) > TELEGRAM_MESSAGE_LIMIT:
+            raise RuntimeError(
+                "Telegram Bad Request: message is too long "
+                f"({len(text)} chars > {TELEGRAM_MESSAGE_LIMIT})")
         self.sent.append(SimpleNamespace(chat_id=chat_id, text=text, kb=reply_markup))
         return SimpleNamespace(message_id=len(self.sent))
 
@@ -47,8 +57,27 @@ class FakeBot:
             fh.write(b"fake-bytes")
 
     async def send_document(self, chat_id, document, caption=None):
+        """aiogram only *uploads* a local file when `document` is an InputFile
+        (FSInputFile for a path on disk). A bare `str` is sent verbatim as the
+        `document` form field, which Telegram reads as a file_id / HTTP URL —
+        a filesystem path is neither, so the API answers
+        "400 wrong file identifier/HTTP URL specified". Reproduce that here,
+        otherwise a caller that passes a path str passes in tests and fails
+        for every real user."""
+        if isinstance(document, (str, bytes)):
+            raise RuntimeError(
+                "Telegram Bad Request: wrong file identifier/HTTP URL specified — "
+                f"send_document got a bare {type(document).__name__} ({document!r}); "
+                "wrap a filesystem path in aiogram.types.FSInputFile to upload it")
+        path = getattr(document, "path", None)
+        if path is None:
+            raise RuntimeError(
+                "send_document expects an FSInputFile-like object with a .path, "
+                f"got {type(document).__name__}")
+        if not os.path.exists(path):
+            raise RuntimeError(f"Telegram Bad Request: file not found: {path}")
         self.documents.append(SimpleNamespace(chat_id=chat_id, document=document,
-                                              caption=caption))
+                                              path=str(path), caption=caption))
         return SimpleNamespace(message_id=len(self.documents))
 
 

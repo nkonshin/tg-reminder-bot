@@ -58,5 +58,6 @@ async def send_export(deps, chat_id: int, include_media: bool, stamp: str) -> in
         total = len(parts)
         for i, part in enumerate(parts, start=1):
             caption = notify.export_part_caption(i, total) if total > 1 else None
-            await deps.bot.send_document(chat_id, part, caption=caption)
+            await deps.bot.send_document(chat_id, notify.as_document(part),
+                                         caption=caption)
         return total
