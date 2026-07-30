@@ -229,6 +229,53 @@ async def test_admin_callback_survives_an_inaccessible_message(monkeypatch):
     await handlers_monitor.admin_callback(cb, monitor)  # must not raise
 
 
+async def test_a_failing_admin_callback_answers_the_button_and_is_logged(monkeypatch, caplog):
+    """admin_command and admin_callback were the only handlers here with no
+    isolation. Worse, the screen was computed BEFORE cb.answer(), so a failure
+    escaped into aiogram with the callback still unanswered and the admin's
+    button spinning until Telegram timed it out."""
+    from src import handlers_monitor
+    from src.config import Config
+
+    async def boom(*_a, **_kw):
+        raise RuntimeError("the panel is broken")
+
+    answered = []
+
+    async def _answer(*_a, **_kw):
+        answered.append(True)
+
+    monkeypatch.setattr(handlers_monitor.admin, "handle_callback", boom)
+    cfg = Config(bot_token="t", her_user_id=100, admin_user_id=200, _env_file=None)
+    monitor = SimpleNamespace(cfg=cfg)
+    cb = SimpleNamespace(data="adm:main", from_user=SimpleNamespace(id=200),
+                         message=SimpleNamespace(), answer=_answer)
+
+    with caplog.at_level(logging.ERROR, logger="src.handlers_monitor"):
+        await handlers_monitor.admin_callback(cb, monitor)  # must not raise
+
+    assert answered, "the button must stop spinning even when the screen fails"
+    assert any("building an admin screen failed" in r.message for r in caplog.records)
+
+
+async def test_a_failing_admin_command_does_not_escape_into_aiogram(monkeypatch, caplog):
+    from src import handlers_monitor
+    from src.config import Config
+
+    async def boom(*_a, **_kw):
+        raise RuntimeError("the panel is broken")
+
+    monkeypatch.setattr(handlers_monitor.admin, "open_panel", boom)
+    cfg = Config(bot_token="t", her_user_id=100, admin_user_id=200, _env_file=None)
+    monitor = SimpleNamespace(cfg=cfg)
+    msg = SimpleNamespace(from_user=SimpleNamespace(id=200))
+
+    with caplog.at_level(logging.ERROR, logger="src.handlers_monitor"):
+        await handlers_monitor.admin_command(msg, monitor)  # must not raise
+
+    assert any("opening the admin panel failed" in r.message for r in caplog.records)
+
+
 def test_business_update_types_are_requested(wired_dispatcher):
     used = wired_dispatcher.resolve_used_update_types()
     for needed in ("business_connection", "business_message",

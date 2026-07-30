@@ -72,21 +72,34 @@ async def deleted(event: BusinessMessagesDeleted, monitor: capture.MonitorDeps) 
 
 @router.message(Command("admin"), F.chat.type == "private")
 async def admin_command(msg: Message, monitor: capture.MonitorDeps) -> None:
-    screen = await admin.open_panel(monitor, msg.from_user.id)
-    if screen is None:
-        return  # not the admin: stay silent
-    text, kb = screen
-    await msg.answer(text, reply_markup=kb)
+    # Isolated like every other handler in this module: the reminder scheduler
+    # shares this process, so a broken panel must be logged, not propagated.
+    try:
+        screen = await admin.open_panel(monitor, msg.from_user.id)
+        if screen is None:
+            return  # not the admin: stay silent
+        text, kb = screen
+        await msg.answer(text, reply_markup=kb)
+    except Exception:
+        log.exception("opening the admin panel failed")
 
 
 @router.callback_query(F.data.startswith("adm:"))
 async def admin_callback(cb: CallbackQuery, monitor: capture.MonitorDeps) -> None:
-    screen = await admin.handle_callback(cb.data, monitor, cb.from_user.id,
-                                         now_local(monitor.cfg))
+    # Answer FIRST. Telegram spins the button until the callback query is
+    # answered (or ~15s pass), so computing the screen before answering means
+    # any failure in handle_callback leaves the admin staring at a spinner and
+    # never says why.
     try:
         await cb.answer()
     except TelegramBadRequest:
         log.warning("callback query expired before it could be answered")
+    try:
+        screen = await admin.handle_callback(cb.data, monitor, cb.from_user.id,
+                                             now_local(monitor.cfg))
+    except Exception:
+        log.exception("building an admin screen failed")
+        return
     if screen is None:
         return
     text, kb = screen
