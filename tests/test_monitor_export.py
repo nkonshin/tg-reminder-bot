@@ -77,3 +77,24 @@ async def test_send_export_delivers_every_part(deps):
     assert sent >= 1
     assert len(deps.bot.documents) == sent
     assert deps.bot.documents[0].chat_id == 200
+
+
+async def test_send_export_captions_multiple_parts_with_a_rejoin_hint(deps):
+    # None of the other send_export tests produce more than one part, so this
+    # covers the actual multi-part path: every part captioned "N/total", and
+    # the rejoin command only on the first one.
+    owner = (await deps.store.list_owners())[0]
+    big_path = os.path.join(deps.cfg.monitor_media_dir, str(owner.id), "1.jpg")
+    with open(big_path, "wb") as fh:
+        fh.write(os.urandom(1_500_000))  # incompressible, so gzip won't shrink it below 1 MB
+    deps.cfg.monitor_export_part_mb = 1
+
+    sent = await export.send_export(deps, 200, True, "20260730")
+
+    assert sent == 2
+    docs = deps.bot.documents
+    assert all(d.chat_id == 200 for d in docs)
+    assert docs[0].caption.startswith("Часть 1/2")
+    assert "cat export-*.tar.gz.part-* > export.tar.gz" in docs[0].caption
+    assert docs[1].caption.startswith("Часть 2/2")
+    assert "cat " not in docs[1].caption
