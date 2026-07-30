@@ -70,3 +70,4 @@ async def test_download_leaves_no_partial_file_when_the_transfer_fails(tmp_path)
     rel = await media.download(bot, cfg, 1, -1, 55, "photo", "file-1")
     assert rel is None
     assert not (tmp_path / "media" / "1" / "-1" / "55.jpg").exists()
+    assert not (tmp_path / "media" / "1" / "-1" / "55.jpg.part").exists()

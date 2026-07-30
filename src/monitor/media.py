@@ -51,7 +51,7 @@ async def download(bot, cfg, owner_id, chat_id, message_id, kind, file_id) -> st
         log.warning("could not download %s for message %s", kind, message_id, exc_info=True)
         try:
             os.remove(tmp)
-        except FileNotFoundError:
+        except Exception:
             pass
         return None
 
