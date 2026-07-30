@@ -30,6 +30,11 @@ async def test_full_creation(deps):
     assert deps.cal.created[0][1] == "Посмотреть анализы"
     card = deps.bot.sent[0]
     assert card.chat_id == 100 and "Поставила напоминание" in card.text
+    # The reminder side must never get a parse_mode: it interpolates
+    # user-written titles into its cards, and titles containing '<' would
+    # fail to send if this were sent as HTML. Only the monitor half opts in
+    # to parse_mode="HTML", and only per call -- see src/monitor/capture.py.
+    assert card.parse_mode is None
 
 
 async def test_no_trigger_is_ignored(deps):

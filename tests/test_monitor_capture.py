@@ -27,13 +27,14 @@ def a_connection(conn_id="conn-1", user_id=100, enabled=True):
 
 
 def a_message(conn_id="conn-1", chat_id=-1, message_id=5, text="привет",
-              user_id=300, name="Собеседник", **media_fields):
+              user_id=300, name="Собеседник", username=None, **media_fields):
     fields = dict(photo=None, video=None, video_note=None, voice=None, document=None)
     fields.update(media_fields)
     return SimpleNamespace(business_connection_id=conn_id,
                            chat=SimpleNamespace(id=chat_id),
                            message_id=message_id, text=text, caption=None,
-                           from_user=SimpleNamespace(id=user_id, full_name=name),
+                           from_user=SimpleNamespace(id=user_id, full_name=name,
+                                                     username=username),
                            **fields)
 
 
@@ -113,12 +114,82 @@ async def test_edit_notifies_with_both_versions(deps):
     assert (await deps.store.get_message(owner.id, -1, 5)).text == "стало"
 
 
+async def test_notifications_are_sent_as_html(deps):
+    # notify_owner must opt in to parse_mode per call -- never globally on the
+    # Bot instance, which the reminder half also shares (see src/main.py).
+    await connect(deps)
+    await capture.on_business_message(a_message(text="было"), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало"), deps, NOW)
+    assert deps.bot.sent[0].parse_mode == "HTML"
+
+
+async def test_from_username_is_journaled_and_appears_in_the_edit_notification(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="было", username="dasha_biz"), deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.from_username == "dasha_biz"
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(
+        a_message(text="стало", username="dasha_biz"), deps, NOW)
+    assert "@dasha_biz" in deps.bot.sent[0].text
+
+
+async def test_an_author_without_a_username_gets_no_stray_parentheses(deps):
+    await connect(deps)
+    await capture.on_business_message(a_message(text="было", username=None), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало", username=None), deps, NOW)
+    # "</b> (" would be the tail of a "(@username)" suffix; the Russian verb
+    # ending "изменил(а)" legitimately has its own parens elsewhere in the text.
+    assert "</b> (" not in deps.bot.sent[0].text
+
+
+async def test_an_edit_with_html_special_characters_is_escaped_and_delivered(deps):
+    # With parse_mode="HTML" on, an unescaped '<', '>' or '&' makes Telegram
+    # reject the whole send -- and notify_owner swallows that failure, so an
+    # unescaped body would mean the owner silently never learns about the
+    # edit at all.
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="5 < 10"), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(
+        a_message(text="Тинькофф & Ко <3"), deps, NOW)
+    assert len(deps.bot.sent) == 1, "the fake bot must accept the escaped send"
+    assert "5 &lt; 10" in deps.bot.sent[0].text
+    assert "Тинькофф &amp; Ко &lt;3" in deps.bot.sent[0].text
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "Тинькофф & Ко <3"
+
+
+async def test_a_delete_with_html_special_characters_is_escaped_and_delivered(deps):
+    await connect(deps)
+    await capture.on_business_message(a_message(text="Тинькофф & Ко <3"), deps, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) == 1
+    assert "Тинькофф &amp; Ко &lt;3" in deps.bot.sent[0].text
+
+
 async def test_edit_with_unchanged_text_is_silent(deps):
     await connect(deps)
     await capture.on_business_message(a_message(text="привет"), deps, NOW)
     deps.bot.sent.clear()
     await capture.on_edited_business_message(a_message(text="привет"), deps, NOW)
     assert deps.bot.sent == []
+
+
+async def test_delete_notifies_with_the_stored_username(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(
+        a_message(text="секрет", username="dasha_biz"), deps, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert "@dasha_biz" in deps.bot.sent[0].text
+    assert (await deps.store.get_message(owner.id, -1, 5)).from_username == "dasha_biz"
 
 
 async def test_delete_notifies_with_the_stored_text(deps):

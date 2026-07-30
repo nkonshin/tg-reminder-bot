@@ -1,3 +1,4 @@
+import html
 from datetime import datetime
 
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -62,32 +63,57 @@ def clip(text: str, limit: int) -> str:
     return text[:limit].rstrip() + TRUNCATED_MARK
 
 
+def _who(name: str | None, username: str | None) -> str:
+    """Author line: bold display name, plus the @username alongside it when
+    Telegram exposes one (many users have none -- no stray parentheses then).
+    Both are attacker-controlled Telegram profile text, escaped before they
+    reach the HTML-parsed message -- an unescaped '<', '>' or '&' makes
+    Telegram reject the whole send."""
+    who = html.escape(name or "Собеседник")
+    if username:
+        return f"<b>{who}</b> (@{html.escape(username)})"
+    return f"<b>{who}</b>"
+
+
+def _quote(text: str, limit: int) -> str:
+    """Clip the raw text first, escape after: escaping first could grow a
+    truncated entity (e.g. cut '&amp;' in half) into malformed markup."""
+    return f"<blockquote>{html.escape(clip(text, limit))}</blockquote>"
+
+
 def _body(message: StoredMessage, limit: int = BODY_LIMIT) -> str:
     if message.text:
-        return f"«{clip(message.text, limit)}»"
+        return _quote(message.text, limit)
     return kind_label(message.media_kind)
 
 
-def edited_text(name: str | None, before: str | None, after: str | None,
-                when_local: datetime) -> str:
-    who = name or "Собеседник"
+def edited_text(name: str | None, username: str | None, before: str | None,
+                after: str | None, when_local: datetime) -> str:
+    who = _who(name, username)
     return (f"✏️ {who} изменил(а) сообщение в {_hm(when_local)}\n\n"
-            f"Было: «{clip(before or '', EDIT_PART_LIMIT)}»\n"
-            f"Стало: «{clip(after or '', EDIT_PART_LIMIT)}»")
+            f"Было:\n{_quote(before or '', EDIT_PART_LIMIT)}\n"
+            f"Стало:\n{_quote(after or '', EDIT_PART_LIMIT)}")
 
 
-def deleted_text(name: str | None, message: StoredMessage, when_local: datetime) -> str:
-    who = name or "Собеседник"
+def deleted_text(name: str | None, username: str | None, message: StoredMessage,
+                 when_local: datetime) -> str:
+    who = _who(name, username)
     return f"🗑 {who} удалил(а) в {_hm(when_local)}: {_body(message)}"
 
 
 def deleted_bulk_text(messages, when_local: datetime) -> str:
     """One summary for a burst of deletions (a "clear history" hands over every
-    id at once). `messages` may contain None for ids that predate the journal."""
+    id at once). `messages` may contain None for ids that predate the journal.
+    Each line is escaped (not blockquoted -- a summary line, not a full quote)
+    since the message body is user-controlled text going into an HTML send."""
     lines, used, shown = [], 0, 0
     for message in messages:
-        body = (_body(message, BULK_LINE_LIMIT) if message is not None
-                else "сообщение не сохранено")
+        if message is None:
+            body = "сообщение не сохранено"
+        elif message.text:
+            body = html.escape(clip(message.text, BULK_LINE_LIMIT))
+        else:
+            body = kind_label(message.media_kind)
         line = f"— {body}"
         if used + len(line) + 1 > BULK_LIMIT:
             break
@@ -112,13 +138,18 @@ def as_document(path: str) -> FSInputFile:
 
 
 def deleted_unknown_text(name: str | None, when_local: datetime) -> str:
-    who = name or "Собеседник"
+    # Escaped like every other author line here: this also goes out through
+    # notify_owner's parse_mode="HTML" send.
+    who = html.escape(name or "Собеседник")
     return (f"🗑 {who} удалил(а) сообщение в {_hm(when_local)} — содержимое "
             "не сохранено (отправлено до подключения бота)")
 
 
 def mirrored_prefix(owner_name: str | None) -> str:
-    return f"[аккаунт: {owner_name or 'без имени'}]\n"
+    # owner_name is the owner's own Telegram display name -- still user-
+    # controlled text, and this prefix rides along on the same HTML-mode send.
+    who = html.escape(owner_name) if owner_name else "без имени"
+    return f"[аккаунт: {who}]\n"
 
 
 def _kb(rows: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:

@@ -61,7 +61,8 @@ async def test_init_migrates_an_older_messages_table(tmp_path):
 
     con = sqlite3.connect(path)
     cols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
-    assert {"text", "media_kind", "media_path", "edited_at", "deleted_at", "from_name"} <= cols
+    assert {"text", "media_kind", "media_path", "edited_at", "deleted_at",
+           "from_name", "from_username"} <= cols
 
 
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
@@ -91,6 +92,15 @@ async def test_record_and_read_message(store):
     await store.record_message(o.id, -1, 55, 100, "Кто-то", "привет", None, None, NOW)
     m = await store.get_message(o.id, -1, 55)
     assert m.text == "привет" and m.deleted_at is None
+    assert m.from_username is None  # not passed above -- must not raise, must default
+
+
+async def test_record_message_stores_the_username_when_given(store):
+    o = await make_owner(store)
+    await store.record_message(o.id, -1, 55, 100, "Кто-то", "привет", None, None, NOW,
+                               from_username="someone")
+    m = await store.get_message(o.id, -1, 55)
+    assert m.from_username == "someone"
 
 
 async def test_record_is_idempotent_on_the_same_key(store):

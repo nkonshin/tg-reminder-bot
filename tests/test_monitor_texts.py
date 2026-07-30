@@ -26,17 +26,28 @@ def an_owner(**over):
 
 
 def test_edited_text_shows_both_versions():
-    t = notify.edited_text("Кто-то", "было", "стало", WHEN)
+    t = notify.edited_text("Кто-то", None, "было", "стало", WHEN)
     assert "было" in t and "стало" in t and "18:05" in t
 
 
+def test_edited_text_wraps_both_versions_in_a_blockquote():
+    t = notify.edited_text("Кто-то", None, "было", "стало", WHEN)
+    assert t.count("<blockquote>") == 2 and t.count("</blockquote>") == 2
+    assert "«" not in t and "»" not in t  # guillemets are gone now that quoting is structural
+
+
 def test_deleted_text_quotes_the_message():
-    t = notify.deleted_text("Кто-то", a_message(), WHEN)
+    t = notify.deleted_text("Кто-то", None, a_message(), WHEN)
     assert "привет" in t and "18:05" in t
 
 
+def test_deleted_text_wraps_the_body_in_a_blockquote():
+    t = notify.deleted_text("Кто-то", None, a_message(), WHEN)
+    assert "<blockquote>привет</blockquote>" in t
+
+
 def test_deleted_text_names_the_media_kind():
-    t = notify.deleted_text("Кто-то", a_message(text=None, media_kind="voice"), WHEN)
+    t = notify.deleted_text("Кто-то", None, a_message(text=None, media_kind="voice"), WHEN)
     assert "голосовое" in t
 
 
@@ -46,28 +57,75 @@ def test_deleted_unknown_says_content_was_not_stored():
 
 
 def test_edited_text_falls_back_to_a_generic_name_when_none_is_known():
-    t = notify.edited_text(None, "было", "стало", WHEN)
+    t = notify.edited_text(None, None, "было", "стало", WHEN)
     assert "Собеседник" in t
 
 
 def test_deleted_text_falls_back_to_a_generic_name_when_none_is_known():
-    t = notify.deleted_text(None, a_message(), WHEN)
+    t = notify.deleted_text(None, None, a_message(), WHEN)
     assert "Собеседник" in t
 
 
 def test_edited_text_stays_inside_the_telegram_limit():
     # Both versions travel in one message; 2500 + 2500 chars is 5056, which
     # sendMessage rejects outright -- so the owner would hear nothing at all.
-    t = notify.edited_text("Кто-то", "а" * 2500, "б" * 2500, WHEN)
+    t = notify.edited_text("Кто-то", None, "а" * 2500, "б" * 2500, WHEN)
     assert len(t) <= notify.MESSAGE_LIMIT
     assert notify.TRUNCATED_MARK in t
     assert "а" in t and "б" in t
 
 
 def test_deleted_text_stays_inside_the_telegram_limit():
-    t = notify.deleted_text("Кто-то", a_message(text="я" * 9000), WHEN)
+    t = notify.deleted_text("Кто-то", None, a_message(text="я" * 9000), WHEN)
     assert len(t) <= notify.MESSAGE_LIMIT
     assert notify.TRUNCATED_MARK in t
+
+
+def test_edited_text_author_line_shows_the_username_when_known():
+    t = notify.edited_text("Даша", "someone", "было", "стало", WHEN)
+    assert "<b>Даша</b> (@someone)" in t
+
+
+def test_edited_text_author_line_has_no_stray_parentheses_without_a_username():
+    t = notify.edited_text("Даша", None, "было", "стало", WHEN)
+    assert "<b>Даша</b>" in t
+    # "</b> (" would be the tail of the "(@username)" suffix; the Russian verb
+    # ending "изменил(а)" legitimately has its own parens, so check the exact
+    # boundary instead of the message as a whole.
+    assert "</b> (" not in t
+
+
+def test_deleted_text_author_line_shows_the_username_when_known():
+    t = notify.deleted_text("Даша", "someone", a_message(), WHEN)
+    assert "<b>Даша</b> (@someone)" in t
+
+
+def test_deleted_text_author_line_has_no_stray_parentheses_without_a_username():
+    t = notify.deleted_text("Даша", None, a_message(), WHEN)
+    assert "<b>Даша</b>" in t
+    assert "</b> (" not in t
+
+
+def test_edited_text_escapes_html_special_characters_in_the_body():
+    t = notify.edited_text("Кто-то", None, "5 < 10", "Тинькофф & Ко <3", WHEN)
+    assert "5 &lt; 10" in t
+    assert "Тинькофф &amp; Ко &lt;3" in t
+    # No unescaped '<' or '>' survive outside of the tags this module itself
+    # inserted -- otherwise Telegram rejects the whole HTML-mode send.
+    assert "< 10" not in t and "Ко <3" not in t
+
+
+def test_edited_text_escapes_the_author_name_and_username():
+    t = notify.edited_text("<script>", "a&b", "было", "стало", WHEN)
+    assert "<script>" not in t
+    assert "&lt;script&gt;" in t
+    assert "a&amp;b" in t
+
+
+def test_deleted_text_escapes_html_special_characters_in_the_body():
+    t = notify.deleted_text("Кто-то", None, a_message(text="Тинькофф & Ко <3"), WHEN)
+    assert "Тинькофф &amp; Ко &lt;3" in t
+    assert "Ко <3" not in t
 
 
 def test_bulk_delete_summary_counts_everything_and_fits():
@@ -81,6 +139,15 @@ def test_bulk_delete_summary_counts_everything_and_fits():
 def test_bulk_delete_summary_reports_ids_it_never_stored():
     t = notify.deleted_bulk_text([None, None], WHEN)
     assert "не сохранено" in t
+
+
+def test_bulk_delete_summary_escapes_each_line():
+    messages = [a_message(message_id=1, text="5 < 10"),
+               a_message(message_id=2, text="Тинькофф & Ко")]
+    t = notify.deleted_bulk_text(messages, WHEN)
+    assert "5 &lt; 10" in t
+    assert "Тинькофф &amp; Ко" in t
+    assert "5 < 10" not in t and "Тинькофф & Ко" not in t
 
 
 def test_as_document_wraps_a_path_for_upload():

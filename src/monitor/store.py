@@ -33,6 +33,7 @@ MESSAGE_COLUMNS = [
     ("message_id", "INTEGER NOT NULL"),
     ("from_user_id", "INTEGER"),
     ("from_name", "TEXT"),
+    ("from_username", "TEXT"),
     ("text", "TEXT"),
     ("media_kind", "TEXT"),
     ("media_path", "TEXT"),
@@ -74,6 +75,10 @@ class StoredMessage:
     sent_at: str
     edited_at: str | None
     deleted_at: str | None
+    # Appended last (with a default) rather than next to from_name, so every
+    # existing positional/keyword construction of this dataclass across the
+    # codebase keeps working unchanged.
+    from_username: str | None = None
 
 
 OWNER_COLS = ", ".join(f.name for f in fields(Owner))
@@ -174,14 +179,19 @@ class MonitorStore:
         await self._exec("UPDATE owners SET retention_days=? WHERE id=?", (days, owner_id))
 
     async def record_message(self, owner_id, chat_id, message_id, from_user_id,
-                             from_name, text, media_kind, media_path, sent_at) -> None:
+                             from_name, text, media_kind, media_path, sent_at,
+                             from_username=None) -> None:
         # OR IGNORE: Telegram can redeliver an update; the first version wins so
         # a redelivery never overwrites an edit we already recorded.
+        # from_username is keyword-only-by-convention and defaulted so every
+        # existing positional call site (tests, other callers) keeps working
+        # unchanged; only capture.py currently passes it explicitly.
         await self._exec(
             "INSERT OR IGNORE INTO messages (owner_id, chat_id, message_id, from_user_id, "
-            "from_name, text, media_kind, media_path, sent_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (owner_id, chat_id, message_id, from_user_id, from_name, text,
-             media_kind, media_path, to_iso(sent_at)))
+            "from_name, from_username, text, media_kind, media_path, sent_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (owner_id, chat_id, message_id, from_user_id, from_name, from_username,
+             text, media_kind, media_path, to_iso(sent_at)))
 
     async def get_message(self, owner_id, chat_id, message_id) -> "StoredMessage | None":
         return await self._row(

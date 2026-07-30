@@ -36,14 +36,15 @@ class FakeBot:
         # mid-download), rather than failing before anything was written.
         self.partial_write_then_fail = False
 
-    async def send_message(self, chat_id, text, reply_markup=None):
+    async def send_message(self, chat_id, text, reply_markup=None, parse_mode=None):
         if chat_id in self.fail_chat_ids or (self.fail_predicate and self.fail_predicate(chat_id, text)):
             raise RuntimeError(self.fail_message)
         if len(text) > TELEGRAM_MESSAGE_LIMIT:
             raise RuntimeError(
                 "Telegram Bad Request: message is too long "
                 f"({len(text)} chars > {TELEGRAM_MESSAGE_LIMIT})")
-        self.sent.append(SimpleNamespace(chat_id=chat_id, text=text, kb=reply_markup))
+        self.sent.append(SimpleNamespace(chat_id=chat_id, text=text, kb=reply_markup,
+                                         parse_mode=parse_mode))
         return SimpleNamespace(message_id=len(self.sent))
 
     async def download(self, file_id, destination):

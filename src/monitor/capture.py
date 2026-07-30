@@ -65,7 +65,8 @@ async def _capture_new_message(deps: MonitorDeps, owner, msg, now: datetime, tex
     await deps.store.record_message(owner.id, msg.chat.id, msg.message_id,
                                     msg.from_user.id if msg.from_user else None,
                                     getattr(msg.from_user, "full_name", None),
-                                    text, kind, None, sent_at)
+                                    text, kind, None, sent_at,
+                                    from_username=getattr(msg.from_user, "username", None))
     if kind and media.is_enabled_for(owner, kind):
         rel = await media.download(deps.bot, deps.cfg, owner.id, msg.chat.id,
                                    msg.message_id, kind, file_id)
@@ -91,7 +92,10 @@ async def notify_owner(deps: MonitorDeps, owner, text: str, file_rel_path=None) 
     for i, chat_id in enumerate(targets):
         body = text if i == 0 else notify.mirrored_prefix(owner.owner_name) + text
         try:
-            await deps.bot.send_message(chat_id, body)
+            # HTML per call, never globally on the Bot object: the reminder
+            # half shares this same Bot instance and interpolates
+            # user-written titles into its cards (see src/main.py).
+            await deps.bot.send_message(chat_id, body, parse_mode="HTML")
             if i == 0:
                 delivered = True
             if file_rel_path:
@@ -140,9 +144,10 @@ async def on_edited_business_message(msg, deps: MonitorDeps, now: datetime) -> N
     author_id = msg.from_user.id if msg.from_user else stored.from_user_id
     if not _authored_by_owner(owner, author_id):
         name = stored.from_name or getattr(msg.from_user, "full_name", None)
+        username = stored.from_username or getattr(msg.from_user, "username", None)
         delivered = await notify_owner(
             deps, owner,
-            notify.edited_text(name, stored.text, new_text, _local(deps, now)))
+            notify.edited_text(name, username, stored.text, new_text, _local(deps, now)))
         if not delivered:
             # mark_edited would overwrite the pre-edit text -- gone from the
             # server and from every future backup -- while the owner still
@@ -184,7 +189,8 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
                 await notify_owner(deps, owner, notify.deleted_unknown_text(None, when))
                 continue
             await notify_owner(deps, owner,
-                               notify.deleted_text(stored.from_name, stored, when),
+                               notify.deleted_text(stored.from_name, stored.from_username,
+                                                   stored, when),
                                file_rel_path=stored.media_path)
     # Unlike mark_edited, this destroys nothing -- it only stamps deleted_at --
     # so it is not gated on delivery.
