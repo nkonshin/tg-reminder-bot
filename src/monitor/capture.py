@@ -167,8 +167,12 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
     # None stands for an id that predates the journal -- still worth reporting,
     # just without content. The owner's own deletions are journaled but not
     # reported back to them.
-    reportable = [known.get(mid) for mid in message_ids
-                  if not _authored_by_owner(owner, getattr(known.get(mid), "from_user_id", None))]
+    reportable = []
+    for message_id in message_ids:
+        stored = known.get(message_id)
+        author_id = stored.from_user_id if stored else None
+        if not _authored_by_owner(owner, author_id):
+            reportable.append(stored)
     if len(reportable) > notify.BULK_THRESHOLD:
         # "Clear history" arrives as one event with every id in it. One send
         # per id makes Telegram 429 most of the burst, and since nothing
