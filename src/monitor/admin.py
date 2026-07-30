@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from datetime import timedelta
@@ -43,8 +44,11 @@ async def _storage_screen(deps, now):
     day = await deps.store.stats(since=now - timedelta(days=1))
     week = await deps.store.stats(since=now - timedelta(days=7))
     month = await deps.store.stats(since=now - timedelta(days=30))
-    text = notify.admin_storage_text(db_bytes, media.dir_size(deps.cfg),
-                                     total, day, week, month)
+    # Walking the media tree is a full recursive stat of every downloaded file;
+    # on the event loop it stalls polling and the reminder scheduler for as
+    # long as it takes.
+    media_bytes = await asyncio.to_thread(media.dir_size, deps.cfg)
+    text = notify.admin_storage_text(db_bytes, media_bytes, total, day, week, month)
     return text, notify.kb_admin_storage()
 
 

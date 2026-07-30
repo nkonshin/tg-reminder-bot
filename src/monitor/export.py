@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sqlite3
 import tarfile
@@ -53,8 +54,16 @@ def split_file(path: str, part_bytes: int) -> list[str]:
 
 async def send_export(deps, chat_id: int, include_media: bool, stamp: str) -> int:
     with tempfile.TemporaryDirectory() as out_dir:
-        archive = build_archive(deps.cfg, deps.store.path, include_media, out_dir, stamp)
-        parts = split_file(archive, deps.cfg.monitor_export_part_mb * 1024 * 1024)
+        # The SQLite backup, tar, gzip and the split are blocking calls that
+        # run for minutes once there are gigabytes of media on disk. Awaited
+        # straight from the admin callback they would freeze the event loop --
+        # polling, the reminder scheduler and every ping -- for that whole
+        # time, so they go to a worker thread. (_snapshot_db is inside
+        # build_archive and is covered by the same hop.)
+        archive = await asyncio.to_thread(build_archive, deps.cfg, deps.store.path,
+                                          include_media, out_dir, stamp)
+        parts = await asyncio.to_thread(
+            split_file, archive, deps.cfg.monitor_export_part_mb * 1024 * 1024)
         total = len(parts)
         for i, part in enumerate(parts, start=1):
             caption = notify.export_part_caption(i, total) if total > 1 else None

@@ -1,5 +1,6 @@
 import os
 import tarfile
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -77,6 +78,31 @@ async def test_send_export_delivers_every_part(deps):
     assert sent >= 1
     assert len(deps.bot.documents) == sent
     assert deps.bot.documents[0].chat_id == 200
+
+
+async def test_send_export_does_its_blocking_work_off_the_event_loop(deps, monkeypatch):
+    # The SQLite backup, tar, gzip and the split all block. Awaited straight
+    # from the admin callback, one "Текст + медиа" press with a few GB on disk
+    # freezes polling, the scheduler and every reminder ping for the duration.
+    loop_thread = threading.get_ident()
+    seen = {}
+    real_build, real_split = export.build_archive, export.split_file
+
+    def build(*a, **kw):
+        seen["build"] = threading.get_ident()
+        return real_build(*a, **kw)
+
+    def split(*a, **kw):
+        seen["split"] = threading.get_ident()
+        return real_split(*a, **kw)
+
+    monkeypatch.setattr(export, "build_archive", build)
+    monkeypatch.setattr(export, "split_file", split)
+
+    await export.send_export(deps, 200, True, "20260730")
+
+    assert seen["build"] != loop_thread, "build_archive ran on the event loop"
+    assert seen["split"] != loop_thread, "split_file ran on the event loop"
 
 
 async def test_send_export_captions_multiple_parts_with_a_rejoin_hint(deps):

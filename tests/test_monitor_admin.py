@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -60,7 +61,22 @@ async def test_storage_screen_reports_counts(deps):
     await deps.store.record_message(owner.id, -1, 2, 100, "A", None, "photo", None,
                                     NOW - timedelta(days=10))
     text, _kb = await admin.handle_callback("adm:storage", deps, 200, NOW)
-    assert "2" in text  # всего сообщений
+    assert "2" in text  # total messages
+
+
+async def test_storage_screen_measures_the_media_dir_off_the_event_loop(deps, monkeypatch):
+    # dir_size() recursively stats every downloaded file; on the event loop
+    # that stalls polling and the reminder scheduler for as long as it takes.
+    loop_thread = threading.get_ident()
+    seen = {}
+
+    def dir_size(cfg):
+        seen["thread"] = threading.get_ident()
+        return 0
+
+    monkeypatch.setattr(admin.media, "dir_size", dir_size)
+    await admin.handle_callback("adm:storage", deps, 200, NOW)
+    assert seen["thread"] != loop_thread, "dir_size ran on the event loop"
 
 
 async def test_unknown_callback_is_ignored(deps):
