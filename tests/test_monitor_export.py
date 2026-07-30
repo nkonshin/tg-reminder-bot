@@ -43,6 +43,44 @@ def test_archive_with_media_includes_the_files(deps, tmp_path):
     assert any(n.endswith(".jpg") for n in names)
 
 
+def test_a_media_file_that_vanishes_mid_archive_is_skipped_not_fatal(deps, tmp_path, monkeypatch):
+    # build_archive now runs in a worker thread (send_export), which removed
+    # the serialisation that used to keep the media tree static while
+    # archiving. tarfile.add(directory) lists a directory and then lstats
+    # each entry; media.download's os.replace(tmp, dest) and the sweeper's
+    # media.remove_file can both delete a file in that window. Reproduce the
+    # race deterministically: remove the second file the instant tar.add is
+    # about to lstat it, simulating "present at listing time, gone by the
+    # time we get to it." The archive must still complete and keep the
+    # survivor -- not abort and lose everything, including files that were
+    # already added.
+    # deps fixture already wrote "<owner_id>/1.jpg"; add a second file that
+    # will vanish, alphabetically after the first so it is reached second.
+    owners_dir = deps.cfg.monitor_media_dir
+    owner_subdir = next(d for d in os.listdir(owners_dir)
+                        if os.path.isdir(os.path.join(owners_dir, d)))
+    victim = os.path.join(owners_dir, owner_subdir, "2.jpg")
+    with open(victim, "wb") as fh:
+        fh.write(b"y" * 10)
+
+    real_add = tarfile.TarFile.add
+
+    def flaky_add(self, name, arcname=None, recursive=True, **kw):
+        if os.path.basename(name) == "2.jpg":
+            os.remove(name)  # gone by the time tar.add would lstat it
+        return real_add(self, name, arcname, recursive, **kw)
+
+    monkeypatch.setattr(tarfile.TarFile, "add", flaky_add)
+
+    path = export.build_archive(deps.cfg, deps.store.path, True, str(tmp_path), "20260730")
+
+    with tarfile.open(path) as tar:
+        names = tar.getnames()
+    assert any(n.endswith("1.jpg") for n in names), "the survivor must still be archived"
+    assert not any(n.endswith("2.jpg") for n in names), "the vanished file must be skipped"
+    assert any(n.endswith(".sqlite3") for n in names)
+
+
 def test_small_file_is_not_split(tmp_path):
     p = tmp_path / "a.tar.gz"
     p.write_bytes(b"x" * 100)

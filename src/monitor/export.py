@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import os
 import sqlite3
 import tarfile
 import tempfile
 
 from src.monitor import notify
+
+log = logging.getLogger(__name__)
 
 
 def _snapshot_db(db_path: str, dest: str) -> None:
@@ -17,6 +20,30 @@ def _snapshot_db(db_path: str, dest: str) -> None:
     dst.close()
 
 
+def _add_media_tree(tar: tarfile.TarFile, media_dir: str) -> None:
+    """build_archive runs on a worker thread (see send_export), so nothing
+    keeps the media tree static while it archives. tarfile.add(directory)
+    lists a directory and then lstats each entry in turn; media.download's
+    os.replace(tmp, dest) retiring a `*.part` sibling, or the nightly
+    sweeper's media.remove_file, can delete a file in exactly that window.
+    That raises FileNotFoundError out of the recursive tar.add and aborts the
+    whole export -- discarding every file already archived along with it.
+    Walk the tree ourselves and add each file independently so one vanished
+    file is skipped, not fatal, and every file that did survive still makes
+    it into the archive."""
+    for root, dirs, files in os.walk(media_dir):
+        dirs.sort()
+        rel_root = os.path.relpath(root, media_dir)
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            arcname = (os.path.join("media", name) if rel_root == "."
+                      else os.path.join("media", rel_root, name))
+            try:
+                tar.add(path, arcname=arcname, recursive=False)
+            except FileNotFoundError:
+                log.warning("skipping media file that vanished during export: %s", path)
+
+
 def build_archive(cfg, db_path: str, include_media: bool, out_dir: str, stamp: str) -> str:
     os.makedirs(out_dir, exist_ok=True)
     archive = os.path.join(out_dir, f"export-{stamp}.tar.gz")
@@ -26,7 +53,7 @@ def build_archive(cfg, db_path: str, include_media: bool, out_dir: str, stamp: s
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(snapshot, arcname="messages.sqlite3")
             if include_media and os.path.isdir(cfg.monitor_media_dir):
-                tar.add(cfg.monitor_media_dir, arcname="media")
+                _add_media_tree(tar, cfg.monitor_media_dir)
     return archive
 
 
