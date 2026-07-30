@@ -25,6 +25,10 @@ class FakeBot:
         self.downloads = []
         self.fail_download = False
         self.documents = []
+        # When set alongside fail_download, simulates a transfer that streamed
+        # some bytes to disk before the failure (real network cutoff/timeout
+        # mid-download), rather than failing before anything was written.
+        self.partial_write_then_fail = False
 
     async def send_message(self, chat_id, text, reply_markup=None):
         if chat_id in self.fail_chat_ids or (self.fail_predicate and self.fail_predicate(chat_id, text)):
@@ -34,6 +38,9 @@ class FakeBot:
 
     async def download(self, file_id, destination):
         if self.fail_download:
+            if self.partial_write_then_fail:
+                with open(destination, "wb") as fh:
+                    fh.write(b"partial")
             raise RuntimeError("download failed")
         self.downloads.append(file_id)
         with open(destination, "wb") as fh:

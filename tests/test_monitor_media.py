@@ -60,3 +60,13 @@ async def test_download_returns_none_when_telegram_fails(tmp_path):
 
 async def test_remove_file_is_quiet_when_it_is_already_gone(tmp_path):
     media.remove_file(cfg_for(tmp_path), "1/-1/55.jpg")  # must not raise
+
+
+async def test_download_leaves_no_partial_file_when_the_transfer_fails(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    bot.fail_download = True
+    bot.partial_write_then_fail = True
+    rel = await media.download(bot, cfg, 1, -1, 55, "photo", "file-1")
+    assert rel is None
+    assert not (tmp_path / "media" / "1" / "-1" / "55.jpg").exists()
