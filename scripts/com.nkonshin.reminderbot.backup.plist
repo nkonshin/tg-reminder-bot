@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nkonshin.reminderbot.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPLACE_WITH_ABSOLUTE_PATH/scripts/backup_pull.sh</string>
+  </array>
+  <!-- Sunday 03:00. If the Mac was asleep at that moment, launchd runs the
+       missed StartCalendarInterval job once it wakes up. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/reminderbot-backup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/reminderbot-backup.err</string>
+</dict>
+</plist>
