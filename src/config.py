@@ -55,6 +55,14 @@ class Config(BaseSettings):
 
     db_path: str = "data/reminders.sqlite3"
 
+    # --- monitor of edited/deleted business messages ---
+    monitor_enabled: bool = True
+    monitor_retention_days: int = 30
+    monitor_media_dir: str = "data/media"
+    monitor_media_timeout_seconds: int = 30
+    monitor_export_part_mb: int = 48
+    monitor_cleanup_hour: int = 4
+
     @property
     def stems(self) -> list[str]:
         return [s.strip().lower() for s in self.trigger_stems.split(",") if s.strip()]
