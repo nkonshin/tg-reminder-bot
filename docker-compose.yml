@@ -4,7 +4,11 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # Both must point inside the mounted volume below. The image's WORKDIR is
+      # /app, so the relative defaults would resolve to /app/data — the
+      # container's writable layer, thrown away by every rebuild.
       DB_PATH: /data/reminders.sqlite3
+      MONITOR_MEDIA_DIR: /data/media
     volumes:
       - ./data:/data
     logging:
