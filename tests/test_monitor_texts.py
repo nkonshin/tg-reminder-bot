@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.monitor import notify
-from src.monitor.store import StoredMessage
+from src.monitor.store import Owner, StoredMessage
 
 TZ = ZoneInfo("Asia/Yekaterinburg")
 WHEN = datetime(2026, 7, 30, 18, 5, tzinfo=TZ)
@@ -14,6 +14,15 @@ def a_message(**over):
                 sent_at="2026-07-30T13:00:00+00:00", edited_at=None, deleted_at=None)
     base.update(over)
     return StoredMessage(**base)
+
+
+def an_owner(**over):
+    base = dict(id=1, business_connection_id="conn-1", owner_user_id=100,
+                owner_name="Кто-то", is_enabled=1, monitor_enabled=1, mirror_to_admin=0,
+                retention_days=None, log_photo=0, log_video=0, log_video_note=0,
+                log_voice=0, log_document=0, connected_at="2026-07-30T13:00:00+00:00")
+    base.update(over)
+    return Owner(**base)
 
 
 def test_edited_text_shows_both_versions():
@@ -52,11 +61,11 @@ def test_format_bytes_is_readable():
     assert notify.format_bytes(5 * 1024 * 1024) == "5.0 МБ"
 
 
-# Task 6 adds kb_admin_media/kb_admin_storage/kb_admin_retention/kb_admin_export;
-# re-enable this test there once every admin keyboard exists.
-# def test_every_admin_button_uses_the_adm_prefix():
-#     for kb in (notify.kb_admin_main(), notify.kb_admin_storage(),
-#                notify.kb_admin_retention(), notify.kb_admin_export()):
-#         for row in kb.inline_keyboard:
-#             for b in row:
-#                 assert b.callback_data.startswith("adm:"), b.callback_data
+def test_every_admin_button_uses_the_adm_prefix():
+    owner = an_owner()
+    for kb in (notify.kb_admin_main(), notify.kb_admin_storage(),
+               notify.kb_admin_retention(), notify.kb_admin_export(),
+               notify.kb_admin_media(owner), notify.kb_admin_owners([owner])):
+        for row in kb.inline_keyboard:
+            for b in row:
+                assert b.callback_data.startswith("adm:"), b.callback_data
