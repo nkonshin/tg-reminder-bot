@@ -13,7 +13,9 @@ from src import calendar_client
 from src.calendar_client import CalendarClient
 from src.config import Config
 
-CAL_URL = "https://caldav.icloud.com/436198658/calendars/abc/"
+# The numeric segment is an Apple DSID — an account identifier. This repository
+# is public, so it is zeroed rather than copied from a real calendar URL.
+CAL_URL = "https://caldav.icloud.com/000000000/calendars/abc/"
 UID = "5cdc7913-b39c-4b4a-9d9b-133d24cb18dc"
 
 
