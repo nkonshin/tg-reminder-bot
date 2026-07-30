@@ -5,6 +5,11 @@
 <dict>
   <key>Label</key>
   <string>com.nkonshin.reminderbot.backup</string>
+  <!-- REPLACE_WITH_ABSOLUTE_PATH must become the absolute path to the cloned
+       repository BEFORE `launchctl load`. launchctl accepts the placeholder
+       without complaint and the agent then fails every week into the log
+       below. Running scripts/backup_pull.sh by hand refuses to proceed while
+       the installed copy of this file still has the placeholder. -->
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
