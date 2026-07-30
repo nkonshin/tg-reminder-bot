@@ -100,6 +100,13 @@ async def handle_callback(data: str, deps, user_id: int, now):
     if action == "export":
         if len(parts) == 2:
             return notify.admin_export_text(), notify.kb_admin_export()
-        return None  # export:text / export:full are handled in Task 7
+        from src.monitor import export as export_mod
+        include_media = parts[2] == "full"
+        stamp = now.strftime("%Y%m%d-%H%M")
+        try:
+            await export_mod.send_export(deps, user_id, include_media, stamp)
+        except Exception:
+            log.exception("export failed")
+        return await _main_screen(deps)
 
     return None

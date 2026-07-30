@@ -159,3 +159,10 @@ def kb_admin_export() -> InlineKeyboardMarkup:
         [("Только текст", "adm:export:text"), ("Текст + медиа", "adm:export:full")],
         [("Назад", "adm:main")],
     ])
+
+
+def export_part_caption(index: int, total: int) -> str:
+    caption = f"Часть {index}/{total}"
+    if index == 1:
+        caption += "\nСобрать обратно: cat export-*.tar.gz.part-* > export.tar.gz"
+    return caption
