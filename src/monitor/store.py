@@ -223,8 +223,11 @@ class MonitorStore:
         if since is not None:
             where, args = " WHERE sent_at >= ?", (to_iso(since),)
         async with aiosqlite.connect(self.path) as c:
+            # CAST ... AS BLOB forces byte-length semantics: SQLite's LENGTH()
+            # on a TEXT value counts characters, which undercounts any
+            # non-ASCII text (this bot's traffic is mostly Cyrillic).
             cur = await c.execute(
-                f"SELECT COUNT(*), COALESCE(SUM(LENGTH(COALESCE(text,''))),0) "
+                f"SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(COALESCE(text,'') AS BLOB))),0) "
                 f"FROM messages{where}", args)
             count, text_bytes = await cur.fetchone()
             cur = await c.execute(

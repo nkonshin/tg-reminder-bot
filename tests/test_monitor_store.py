@@ -137,3 +137,33 @@ async def test_stats_counts_messages_and_kinds(store):
     assert total["by_kind"]["photo"] == 1
     recent = await store.stats(since=NOW - timedelta(days=1))
     assert recent["messages"] == 2
+
+
+async def test_stats_text_bytes_counts_utf8_bytes_not_characters(store):
+    o = await make_owner(store)
+    first, second = "привет", "мир"
+    await store.record_message(o.id, -1, 1, 100, "A", first, None, None, NOW)
+    await store.record_message(o.id, -1, 2, 100, "A", second, None, None, NOW)
+    expected = len(first.encode("utf-8")) + len(second.encode("utf-8"))
+    assert expected != len(first) + len(second)  # sanity: Cyrillic is multi-byte in UTF-8
+    assert (await store.stats())["text_bytes"] == expected
+
+
+async def test_upsert_owner_preserves_settings_on_reconnect(store):
+    o = await make_owner(store)
+    await store.set_owner_flag(o.id, "log_photo", 1)
+    again = await store.upsert_owner("conn-1", 100, "Owner", True, NOW)
+    assert again.log_photo == 1
+    assert again.is_enabled == 1
+
+
+async def test_set_owner_flag_rejects_field_outside_toggleable(store):
+    o = await make_owner(store)
+    with pytest.raises(ValueError):
+        await store.set_owner_flag(o.id, "owner_user_id", 999)
+    assert (await store.get_owner_by_id(o.id)).owner_user_id == 100
+
+
+async def test_get_messages_with_empty_ids_returns_empty_list(store):
+    o = await make_owner(store)
+    assert await store.get_messages(o.id, -1, []) == []
