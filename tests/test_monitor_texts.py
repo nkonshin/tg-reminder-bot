@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -36,6 +37,17 @@ def test_edited_text_wraps_both_versions_in_a_blockquote():
     assert "«" not in t and "»" not in t  # guillemets are gone now that quoting is structural
 
 
+def test_edited_text_omits_the_blockquote_for_an_empty_version():
+    # A media-only message with no caption edited to add one (or the other
+    # way around) has an empty before/after. An empty <blockquote></blockquote>
+    # renders as a stray empty quote box in Telegram, so this is a plain
+    # placeholder instead of empty markup.
+    t = notify.edited_text("Кто-то", None, "", "стало", WHEN)
+    assert "<blockquote></blockquote>" not in t
+    assert "без текста" in t
+    assert t.count("<blockquote>") == 1  # only "стало" is actually quoted
+
+
 def test_deleted_text_quotes_the_message():
     t = notify.deleted_text("Кто-то", None, a_message(), WHEN)
     assert "привет" in t and "18:05" in t
@@ -54,6 +66,21 @@ def test_deleted_text_names_the_media_kind():
 def test_deleted_unknown_says_content_was_not_stored():
     t = notify.deleted_unknown_text("Кто-то", WHEN)
     assert "не сохранено" in t
+
+
+def test_deleted_unknown_text_escapes_the_name():
+    # This string also goes out through notify_owner's parse_mode="HTML"
+    # send, so an unescaped name here would break it exactly like an
+    # unescaped message body would.
+    t = notify.deleted_unknown_text("<x>", WHEN)
+    assert "&lt;x&gt;" in t
+    assert "<x>" not in t
+
+
+def test_mirrored_prefix_escapes_the_owner_name():
+    t = notify.mirrored_prefix("A & B")
+    assert "A &amp; B" in t
+    assert "A & B" not in t
 
 
 def test_edited_text_falls_back_to_a_generic_name_when_none_is_known():
@@ -79,6 +106,35 @@ def test_deleted_text_stays_inside_the_telegram_limit():
     t = notify.deleted_text("Кто-то", None, a_message(text="я" * 9000), WHEN)
     assert len(t) <= notify.MESSAGE_LIMIT
     assert notify.TRUNCATED_MARK in t
+
+
+def test_deleted_text_stays_inside_the_limit_when_escaping_would_expand_it():
+    # html.escape can grow text up to 5x ('&' -> '&amp;'). Clipping the RAW
+    # text to BODY_LIMIT and escaping afterwards (the old order) would let a
+    # message of 3000 '&' escape out to 15000 chars -- past MESSAGE_LIMIT,
+    # so the send raises and notify_owner silently drops the notification.
+    t = notify.deleted_text("Кто-то", None, a_message(text="&" * 3000), WHEN)
+    assert len(t) <= notify.MESSAGE_LIMIT
+    assert notify.TRUNCATED_MARK in t
+
+
+def test_edited_text_stays_inside_the_limit_when_escaping_would_expand_it():
+    t = notify.edited_text("Кто-то", None, "&" * 1500, "&" * 1500, WHEN)
+    assert len(t) <= notify.MESSAGE_LIMIT
+    assert notify.TRUNCATED_MARK in t
+
+
+def test_clipping_after_escaping_never_leaves_a_truncated_html_entity():
+    # Land the cut exactly inside an '&amp;' entity: 2998 plain chars plus a
+    # run of '&' means BODY_LIMIT=3000 lands two characters into the first
+    # '&amp;' of the run ('&a'). A naive clip of the escaped string would
+    # leave that dangling '&a' in the outgoing HTML, which Telegram also
+    # rejects.
+    before = "a" * 2998 + "&" * 10
+    t = notify.deleted_text("Кто-то", None, a_message(text=before), WHEN)
+    # Every '&' in the output must start one of the five entities
+    # html.escape can produce -- no partial fragment survives.
+    assert re.search(r"&(?!amp;|lt;|gt;|quot;|#x27;)", t) is None
 
 
 def test_edited_text_author_line_shows_the_username_when_known():

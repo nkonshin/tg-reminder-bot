@@ -1,4 +1,5 @@
 import html
+import re
 from datetime import datetime
 
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -26,6 +27,13 @@ BULK_LINE_LIMIT = 200
 BULK_THRESHOLD = 20
 
 TRUNCATED_MARK = " […обрезано]"
+
+# A trailing fragment of one of the five entities html.escape() can produce
+# (&amp; &lt; &gt; &quot; &#x27;), with no closing ';' -- i.e. the cut landed
+# inside the entity rather than before or after it. Anchored at the end of
+# the string; a *complete* entity always ends in ';', which none of these
+# alternatives consume, so a well-formed trailing entity is never matched.
+_PARTIAL_ENTITY_RE = re.compile(r"&(#x?[0-9a-fA-F]*|[a-zA-Z]*)$")
 
 KIND_LABELS = {
     "photo": "фото",
@@ -75,10 +83,35 @@ def _who(name: str | None, username: str | None) -> str:
     return f"<b>{who}</b>"
 
 
+def _clip_escaped(text: str, limit: int) -> str:
+    """Escape first, THEN clip to `limit` characters of the escaped text.
+
+    html.escape() can expand text up to 5x ('&' -> '&amp;'), so clipping the
+    raw text to `limit` and escaping afterwards -- the natural-looking order
+    -- lets the escaped result blow straight past `limit`, and with it
+    Telegram's whole-message cap: the send then raises and notify_owner
+    swallows the failure, so the owner silently never learns about the
+    edit/delete at all.
+
+    Clipping the already-escaped text can itself land inside an entity (e.g.
+    cut '&amp;' into '&am'), which Telegram's HTML parser also rejects, so
+    any dangling partial entity at the cut point is stripped before the
+    truncation mark is appended.
+    """
+    escaped = html.escape(text)
+    if len(escaped) <= limit:
+        return escaped
+    cut = _PARTIAL_ENTITY_RE.sub("", escaped[:limit])
+    return cut.rstrip() + TRUNCATED_MARK
+
+
 def _quote(text: str, limit: int) -> str:
-    """Clip the raw text first, escape after: escaping first could grow a
-    truncated entity (e.g. cut '&amp;' in half) into malformed markup."""
-    return f"<blockquote>{html.escape(clip(text, limit))}</blockquote>"
+    if not text:
+        # An empty <blockquote></blockquote> (a media message with no
+        # caption, edited to add/remove text) renders as a stray empty quote
+        # box in Telegram -- a plain placeholder instead.
+        return "(без текста)"
+    return f"<blockquote>{_clip_escaped(text, limit)}</blockquote>"
 
 
 def _body(message: StoredMessage, limit: int = BODY_LIMIT) -> str:

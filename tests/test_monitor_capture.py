@@ -172,6 +172,31 @@ async def test_a_delete_with_html_special_characters_is_escaped_and_delivered(de
     assert "Тинькофф &amp; Ко &lt;3" in deps.bot.sent[0].text
 
 
+async def test_a_delete_full_of_ampersands_is_still_delivered_within_the_limit(deps):
+    # html.escape expands '&' 5x ('&' -> '&amp;'); clipping the raw text and
+    # escaping afterwards let a 3000-char body balloon past FakeBot's/
+    # Telegram's 4096 cap. The send then raised, notify_owner swallowed it,
+    # and the owner was never told about the deletion at all.
+    await connect(deps)
+    await capture.on_business_message(a_message(text="&" * 3000), deps, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert len(deps.bot.sent) == 1, "the owner must still be told about the deletion"
+    assert len(deps.bot.sent[0].text) <= 4096
+
+
+async def test_an_edit_full_of_ampersands_is_still_delivered_within_the_limit(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="&" * 1500), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="&" * 1500 + "x"), deps, NOW)
+    assert len(deps.bot.sent) == 1, "the owner must still be told about the edit"
+    assert len(deps.bot.sent[0].text) <= 4096
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "&" * 1500 + "x"
+
+
 async def test_edit_with_unchanged_text_is_silent(deps):
     await connect(deps)
     await capture.on_business_message(a_message(text="привет"), deps, NOW)
