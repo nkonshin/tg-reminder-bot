@@ -25,6 +25,7 @@ decided that deliberately.
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +41,24 @@ from src.monitor import media
 from src.monitor.store import MESSAGE_COLS, StoredMessage
 
 EXAMPLES_SHOWN = 5
+
+
+async def _db_error(db_path: str) -> str | None:
+    """aiosqlite.connect() does not fail on a path that does not exist yet --
+    sqlite creates an empty 0-byte file there instead, silently, the moment
+    it's opened -- and a query against a table that isn't there raises a raw
+    sqlite3.OperationalError with no context about which script or path was
+    wrong. A maintenance script that deletes rows has to fail loudly on a
+    mistyped --db instead, and before touching the filesystem at all.
+    Returns a human-readable reason the database looks unusable, or None."""
+    if not os.path.isfile(db_path):
+        return f"no such database file: {db_path}"
+    async with aiosqlite.connect(db_path) as c:
+        cur = await c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        if await cur.fetchone() is None:
+            return f"{db_path} has no 'messages' table -- is this the right database?"
+    return None
 
 
 async def _total_rows(db_path: str) -> int:
@@ -100,6 +119,11 @@ async def run(argv=None) -> int:
 
     db_path, media_dir = _resolve_paths(args.db, args.media_dir)
 
+    error = await _db_error(db_path)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
     before = await _total_rows(db_path)
     matches = await _matching(db_path, args.bot_user_id)
 
@@ -122,8 +146,15 @@ async def run(argv=None) -> int:
     media_cfg = SimpleNamespace(monitor_media_dir=media_dir)
     removed_files = 0
     for row in matches:
-        if row.media_path:
-            media.remove_file(media_cfg, row.media_path)
+        if not row.media_path:
+            continue
+        # Count only files that actually existed on disk -- a stale
+        # media_path with nothing there (already cleaned up, e.g. by a
+        # retention sweep) must not inflate "deleted media files".
+        abs_path = os.path.join(media_dir, row.media_path)
+        existed = os.path.exists(abs_path)
+        media.remove_file(media_cfg, row.media_path)
+        if existed:
             removed_files += 1
 
     deleted = await _delete(db_path, args.bot_user_id)

@@ -71,6 +71,27 @@ def _authored_by_a_bot(msg) -> bool:
     return bool(getattr(getattr(msg, "from_user", None), "is_bot", False))
 
 
+def _is_owner_control_chat(owner, chat_id) -> bool:
+    """In a Telegram private chat the chat id equals the other party's user
+    id, so the owner's own chat WITH THIS BOT -- where the /admin panel lives
+    and this bot's own notifications are sent -- is uniquely identified by
+    chat_id == owner.owner_user_id. Nothing in that chat is a conversation
+    with a third party, so it is skipped wholesale on every path: a new
+    message, an edit, and a delete alike.
+
+    This is what makes the delete path safe even though a delete event
+    carries only bare message ids with no author attached -- _authored_by_a_bot
+    cannot be checked there (there is no message to read from_user off of),
+    but the chat the deletion happened in is always known, and checking that
+    is enough: since nothing from this chat is ever journaled to begin with,
+    a delete of an id in it has nothing legitimate to report either.
+
+    Complementary to _authored_by_a_bot, not a replacement for it: this
+    removes the owner's one control chat wholesale; that one still catches a
+    *different* bot's noise inside the owner's real dialogs elsewhere."""
+    return chat_id == owner.owner_user_id
+
+
 async def _capture_new_message(deps: MonitorDeps, owner, msg, now: datetime, text) -> None:
     """Record a message this journal has not seen before. Metadata is written
     unconditionally -- so a later edit or deletion can still describe it (e.g.
@@ -155,6 +176,8 @@ async def on_business_message(msg, deps: MonitorDeps, now: datetime) -> None:
     owner = await _active_owner(deps, msg.business_connection_id)
     if owner is None:
         return
+    if _is_owner_control_chat(owner, msg.chat.id):
+        return
     if _authored_by_a_bot(msg):
         return
     text = msg.text or getattr(msg, "caption", None)
@@ -165,6 +188,8 @@ async def on_business_message(msg, deps: MonitorDeps, now: datetime) -> None:
 async def on_edited_business_message(msg, deps: MonitorDeps, now: datetime) -> None:
     owner = await _active_owner(deps, msg.business_connection_id)
     if owner is None:
+        return
+    if _is_owner_control_chat(owner, msg.chat.id):
         return
     if _authored_by_a_bot(msg):
         return
@@ -210,6 +235,8 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
     if owner is None:
         return
     chat_id = event.chat.id
+    if _is_owner_control_chat(owner, chat_id):
+        return
     message_ids = list(event.message_ids)
     known = {m.message_id: m for m in
              await deps.store.get_messages(owner.id, chat_id, message_ids)}

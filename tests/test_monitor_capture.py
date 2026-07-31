@@ -583,6 +583,81 @@ async def test_a_bots_own_notification_reflected_back_is_not_rejournaled(deps):
     assert deps.bot.sent == []
 
 
+async def test_a_new_message_in_the_owners_control_chat_is_not_journaled(deps):
+    # A private chat's id equals the other party's user id, so the owner's
+    # own chat WITH THIS BOT is uniquely identified by chat_id ==
+    # owner.owner_user_id. Nothing there is a real дialogue -- it's the
+    # panel/admin surface -- so it must be skipped wholesale, independent of
+    # the is_bot filter (this message is not itself marked as a bot).
+    owner = await connect(deps)
+    await capture.on_business_message(
+        a_message(chat_id=owner.owner_user_id, text="Панель управления"), deps, NOW)
+    assert await deps.store.get_message(owner.id, owner.owner_user_id, 5) is None
+    assert deps.bot.sent == []
+
+
+async def test_an_edit_in_the_owners_control_chat_sends_nothing(deps):
+    owner = await connect(deps)
+    await capture.on_edited_business_message(
+        a_message(chat_id=owner.owner_user_id, text="Панель v2"), deps, NOW)
+    assert await deps.store.get_message(owner.id, owner.owner_user_id, 5) is None
+    assert deps.bot.sent == []
+
+
+async def test_a_delete_in_the_owners_control_chat_sends_nothing(deps):
+    # The finding this section exists to pin: since bot messages are never
+    # journaled, a delete event for one used to fall into the "unknown id"
+    # branch and notify "содержимое не сохранено (отправлено до подключения
+    # бота)" -- wrong (the bot sent it seconds ago) and exactly the kind of
+    # self-referential noise this whole change removes, just via the delete
+    # path instead of the edit path.
+    owner = await connect(deps)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=owner.owner_user_id), message_ids=[999])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert deps.bot.sent == []
+
+
+async def test_a_bulk_delete_in_the_owners_control_chat_sends_nothing(deps):
+    owner = await connect(deps)
+    deps.bot.sent.clear()
+    ids = list(range(1, notify.BULK_THRESHOLD + 5))
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=owner.owner_user_id), message_ids=ids)
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert deps.bot.sent == []
+
+
+async def test_a_message_in_an_ordinary_dialog_is_still_journaled_and_notified(deps):
+    # Regression guard for the control-chat filter: only the one chat whose
+    # id matches the owner's own user id is special. Every other chat --
+    # including a real собеседник -- must keep flowing exactly as before.
+    owner = await connect(deps)
+    assert owner.owner_user_id != -1
+    await capture.on_business_message(a_message(chat_id=-1, text="было"), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(chat_id=-1, text="стало"), deps, NOW)
+    assert len(deps.bot.sent) == 1
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "стало"
+
+
+async def test_owner_ones_control_chat_id_does_not_suppress_owner_twos_dialog(deps):
+    # Each owner's control chat is scoped to THAT owner's own user id, not a
+    # global constant -- owner two's real dialog with a contact whose user id
+    # happens to equal owner one's id must not be swallowed by owner one's
+    # filter.
+    owner1 = await connect(deps, conn_id="conn-1", user_id=100)
+    owner2 = await connect(deps, conn_id="conn-2", user_id=200)
+    await capture.on_business_message(
+        a_message(conn_id="conn-2", chat_id=owner1.owner_user_id, text="было"), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(
+        a_message(conn_id="conn-2", chat_id=owner1.owner_user_id, text="стало"), deps, NOW)
+    assert len(deps.bot.sent) == 1
+    assert (await deps.store.get_message(owner2.id, owner1.owner_user_id, 5)).text == "стало"
+
+
 async def test_a_broken_store_does_not_crash_the_connection_handler(deps, monkeypatch):
     async def boom(*a, **kw):
         raise RuntimeError("db exploded")
