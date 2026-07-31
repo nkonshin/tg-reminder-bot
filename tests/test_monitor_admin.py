@@ -102,6 +102,32 @@ async def test_toggle_is_ignored_for_an_unknown_owner(deps):
                                        deps, 200, NOW) is None
 
 
+async def test_notify_toggle_flips_the_flag(deps):
+    owner = (await deps.store.list_owners())[0]
+    data = f"adm:toggle:{owner.id}:notify_enabled"
+    await admin.handle_callback(data, deps, 200, NOW)
+    assert (await deps.store.get_owner_by_id(owner.id)).notify_enabled == 0
+    await admin.handle_callback(data, deps, 200, NOW)
+    assert (await deps.store.get_owner_by_id(owner.id)).notify_enabled == 1
+
+
+async def test_notify_toggle_redraws_the_owners_screen_not_media(deps):
+    owner = (await deps.store.list_owners())[0]
+    _text, kb = await admin.handle_callback(
+        f"adm:toggle:{owner.id}:notify_enabled", deps, 200, NOW)
+    # redrawn as the Мониторинг screen: still shows the mirror toggle,
+    # not the media-download screen
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert f"adm:toggle:{owner.id}:mirror_to_admin" in data
+
+
+async def test_toggle_still_rejects_a_field_outside_toggleable_after_adding_notify(deps):
+    owner = (await deps.store.list_owners())[0]
+    result = await admin.handle_callback(f"adm:toggle:{owner.id}:owner_name",
+                                         deps, 200, NOW)
+    assert result is None
+
+
 @pytest.fixture
 async def empty_deps(tmp_path):
     store = MonitorStore(str(tmp_path / "empty.sqlite3"))

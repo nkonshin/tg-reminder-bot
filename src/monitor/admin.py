@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 # Toggles that belong to the Мониторинг screen; everything else in TOGGLEABLE
 # is a media-download switch and redraws the Медиа screen instead.
-OWNER_SCREEN_FIELDS = ("monitor_enabled", "mirror_to_admin")
+OWNER_SCREEN_FIELDS = ("monitor_enabled", "mirror_to_admin", "notify_enabled")
 
 # A negative retention makes the sweep's cutoff a moment in the FUTURE, so the
 # next nightly run deletes the whole journal. 3650 days is ten years, well past

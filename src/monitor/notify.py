@@ -246,12 +246,18 @@ def admin_owners_text(owners, monitor_enabled: bool) -> str:
     state = "включён" if monitor_enabled else "выключен"
     head = ("Мониторинг\n\n"
             f"Глобально (MONITOR_ENABLED): {state} — при выключенном не работает "
-            "ничего, независимо от тумблеров ниже.")
+            "ничего, независимо от тумблеров ниже.\n\n"
+            "«Журнал» у отдельного подключения — то же самое, но только для "
+            "него: на паузе не работает вообще ничего, архив тоже. "
+            "«Уведомления» — мягче: журнал ведётся как обычно (архив, "
+            "экспорт, бэкап), просто владельцу не приходят пинги о правках "
+            "и удалениях.")
     if not owners:
         return head + "\n\nПодключений пока нет."
     rows = [f"{o.owner_name or o.owner_user_id}: "
             f"{'подключено' if o.is_enabled else 'отключено Telegram'}, "
             f"журнал {'ведётся' if o.monitor_enabled else 'на паузе'}, "
+            f"уведомления {'вкл' if o.notify_enabled else 'выкл'}, "
             f"дубли админу {'вкл' if o.mirror_to_admin else 'выкл'}" for o in owners]
     return head + "\n\n" + "\n".join(rows)
 
@@ -295,12 +301,15 @@ def kb_admin_retention() -> InlineKeyboardMarkup:
 
 
 def kb_admin_owners(owners) -> InlineKeyboardMarkup:
-    """One row per connection with both of its switches: the per-owner
-    monitoring pause the spec asks for, and the mirror-to-admin toggle."""
+    """One row per connection with all three of its switches: the per-owner
+    monitoring pause (stops everything, journal included), the notify-only
+    mute (journal keeps running, only the pings stop), and the mirror-to-
+    admin toggle."""
     rows = []
     for o in owners:
         whose = o.owner_name or o.owner_user_id
         rows.append([_toggle(o, "monitor_enabled", f"журнал: {whose}")])
+        rows.append([_toggle(o, "notify_enabled", f"уведомления: {whose}")])
         rows.append([_toggle(o, "mirror_to_admin", f"дубли админу: {whose}")])
     rows.append([("Назад", "adm:main")])
     return _kb(rows)

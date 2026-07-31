@@ -38,6 +38,10 @@ def _isolated(handler):
 
 
 async def _active_owner(deps: MonitorDeps, business_connection_id: str):
+    """Gates journaling only: is_enabled/monitor_enabled off means nothing at
+    all happens for this owner, archive included. notify_enabled is a
+    separate, narrower gate -- it only silences delivery -- so it is checked
+    at send time (see _notify_if_enabled), never here."""
     owner = await deps.store.get_owner(business_connection_id)
     if owner is None or not owner.is_enabled or not owner.monitor_enabled:
         return None
@@ -107,6 +111,22 @@ async def notify_owner(deps: MonitorDeps, owner, text: str, file_rel_path=None) 
     return delivered
 
 
+async def _notify_if_enabled(deps: MonitorDeps, owner, text: str, file_rel_path=None):
+    """Wrap notify_owner with the notify_enabled gate. A muted owner gets no
+    send at all -- not to themselves, not to a mirrored admin -- so "off"
+    truly means silence, not "the owner is quiet but the admin still hears".
+
+    Returns None when the notification was deliberately never attempted,
+    distinct from notify_owner's own True/False. Callers that gate a journal
+    write on delivery (mark_edited, below) must tell a genuine send failure
+    apart from a deliberate mute: `result is False` only happens after a real
+    attempt, so a mute never blocks the write the way an actual failure does.
+    """
+    if not owner.notify_enabled:
+        return None
+    return await notify_owner(deps, owner, text, file_rel_path=file_rel_path)
+
+
 @_isolated
 async def on_business_connection(conn, deps: MonitorDeps, now: datetime) -> None:
     await deps.store.upsert_owner(conn.id, conn.user.id,
@@ -145,14 +165,20 @@ async def on_edited_business_message(msg, deps: MonitorDeps, now: datetime) -> N
     if not _authored_by_owner(owner, author_id):
         name = stored.from_name or getattr(msg.from_user, "full_name", None)
         username = stored.from_username or getattr(msg.from_user, "username", None)
-        delivered = await notify_owner(
+        delivered = await _notify_if_enabled(
             deps, owner,
             notify.edited_text(name, username, stored.text, new_text, _local(deps, now)))
-        if not delivered:
-            # mark_edited would overwrite the pre-edit text -- gone from the
-            # server and from every future backup -- while the owner still
-            # does not know an edit happened. Keep the original instead: the
-            # next edit of this message compares against it and reports again.
+        if delivered is False:
+            # A real send was attempted and failed. mark_edited would
+            # overwrite the pre-edit text -- gone from the server and from
+            # every future backup -- while the owner still does not know an
+            # edit happened. Keep the original instead: the next edit of this
+            # message compares against it and reports again.
+            #
+            # delivered is None (not False) when the owner is deliberately
+            # muted (notify_enabled=0): no send was attempted at all, so this
+            # gate must not apply -- a muted owner still gets a correctly
+            # maintained journal.
             log.warning("edit notification undelivered for message %s; "
                         "keeping the stored original", msg.message_id)
             return
@@ -182,16 +208,16 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
         # "Clear history" arrives as one event with every id in it. One send
         # per id makes Telegram 429 most of the burst, and since nothing
         # retries, those deletions are simply never reported.
-        await notify_owner(deps, owner, notify.deleted_bulk_text(reportable, when))
+        await _notify_if_enabled(deps, owner, notify.deleted_bulk_text(reportable, when))
     else:
         for stored in reportable:
             if stored is None:
-                await notify_owner(deps, owner, notify.deleted_unknown_text(None, when))
+                await _notify_if_enabled(deps, owner, notify.deleted_unknown_text(None, when))
                 continue
-            await notify_owner(deps, owner,
-                               notify.deleted_text(stored.from_name, stored.from_username,
-                                                   stored, when),
-                               file_rel_path=stored.media_path)
+            await _notify_if_enabled(deps, owner,
+                                     notify.deleted_text(stored.from_name, stored.from_username,
+                                                         stored, when),
+                                     file_rel_path=stored.media_path)
     # Unlike mark_edited, this destroys nothing -- it only stamps deleted_at --
     # so it is not gated on delivery.
     for message_id in message_ids:

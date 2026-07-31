@@ -65,6 +65,46 @@ async def test_init_migrates_an_older_messages_table(tmp_path):
            "from_name", "from_username"} <= cols
 
 
+async def test_init_migrates_an_older_owners_table_and_defaults_notify_enabled_on(tmp_path):
+    # A live owners row created before notify_enabled existed must gain the
+    # column and default to "on" -- an existing connection must keep being
+    # notified after the upgrade, not fall silent.
+    path = str(tmp_path / "old_owners.sqlite3")
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE owners (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          business_connection_id TEXT NOT NULL UNIQUE,
+          owner_user_id INTEGER NOT NULL,
+          owner_name TEXT,
+          is_enabled INTEGER NOT NULL DEFAULT 1,
+          monitor_enabled INTEGER NOT NULL DEFAULT 1,
+          mirror_to_admin INTEGER NOT NULL DEFAULT 0,
+          retention_days INTEGER,
+          log_photo INTEGER NOT NULL DEFAULT 0,
+          log_video INTEGER NOT NULL DEFAULT 0,
+          log_video_note INTEGER NOT NULL DEFAULT 0,
+          log_voice INTEGER NOT NULL DEFAULT 0,
+          log_document INTEGER NOT NULL DEFAULT 0,
+          connected_at TEXT NOT NULL
+        );
+        INSERT INTO owners (business_connection_id, owner_user_id, owner_name, connected_at)
+        VALUES ('conn-old', 100, 'Owner', '2026-07-01T00:00:00+00:00');
+    """)
+    con.commit()
+    con.close()
+
+    s = MonitorStore(path)
+    await s.init()
+
+    con = sqlite3.connect(path)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(owners)")}
+    assert "notify_enabled" in cols
+    row = con.execute("SELECT owner_user_id, notify_enabled FROM owners "
+                      "WHERE business_connection_id='conn-old'").fetchone()
+    assert row == (100, 1)  # the pre-existing row survives and stays notified
+
+
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
 
 
@@ -165,6 +205,19 @@ async def test_upsert_owner_preserves_settings_on_reconnect(store):
     again = await store.upsert_owner("conn-1", 100, "Owner", True, NOW)
     assert again.log_photo == 1
     assert again.is_enabled == 1
+
+
+async def test_owner_defaults_to_notifications_enabled(store):
+    o = await make_owner(store)
+    assert o.notify_enabled == 1
+
+
+async def test_notify_enabled_toggle_roundtrip(store):
+    o = await make_owner(store)
+    await store.set_owner_flag(o.id, "notify_enabled", 0)
+    assert (await store.get_owner_by_id(o.id)).notify_enabled == 0
+    await store.set_owner_flag(o.id, "notify_enabled", 1)
+    assert (await store.get_owner_by_id(o.id)).notify_enabled == 1
 
 
 async def test_set_owner_flag_rejects_field_outside_toggleable(store):

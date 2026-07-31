@@ -17,6 +17,11 @@ OWNER_COLUMNS = [
     ("is_enabled", "INTEGER NOT NULL DEFAULT 1"),
     ("monitor_enabled", "INTEGER NOT NULL DEFAULT 1"),
     ("mirror_to_admin", "INTEGER NOT NULL DEFAULT 0"),
+    # Silences outbound notifications for this owner while journaling keeps
+    # running (see monitor_enabled above, which stops everything). Defaults
+    # to 1 so an existing connection, migrated from a schema that predates
+    # this column, keeps being notified rather than going quiet.
+    ("notify_enabled", "INTEGER NOT NULL DEFAULT 1"),
     ("retention_days", "INTEGER"),
     ("log_photo", "INTEGER NOT NULL DEFAULT 0"),
     ("log_video", "INTEGER NOT NULL DEFAULT 0"),
@@ -52,6 +57,7 @@ class Owner:
     is_enabled: int
     monitor_enabled: int
     mirror_to_admin: int
+    notify_enabled: int
     retention_days: int | None
     log_photo: int
     log_video: int
@@ -89,7 +95,7 @@ MEDIA_KINDS = ("photo", "video", "video_note", "voice", "document")
 # Fields set_owner_flag() is allowed to write. The admin panel builds these
 # callbacks from user-tapped buttons, so this whitelist is what stops a
 # crafted callback from overwriting an arbitrary column.
-TOGGLEABLE = ("monitor_enabled", "mirror_to_admin",
+TOGGLEABLE = ("monitor_enabled", "mirror_to_admin", "notify_enabled",
               "log_photo", "log_video", "log_video_note", "log_voice", "log_document")
 
 

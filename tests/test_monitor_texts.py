@@ -20,6 +20,7 @@ def a_message(**over):
 def an_owner(**over):
     base = dict(id=1, business_connection_id="conn-1", owner_user_id=100,
                 owner_name="Кто-то", is_enabled=1, monitor_enabled=1, mirror_to_admin=0,
+                notify_enabled=1,
                 retention_days=None, log_photo=0, log_video=0, log_video_note=0,
                 log_voice=0, log_document=0, connected_at="2026-07-30T13:00:00+00:00")
     base.update(over)
@@ -219,6 +220,25 @@ def test_owners_screen_states_the_global_switch_and_every_flag():
     assert "Первый" in t and "на паузе" in t and "вкл" in t
 
 
+def test_owners_screen_explains_the_difference_between_journal_and_notify_pauses():
+    # A future reader must not confuse "журнал на паузе" (nothing at all,
+    # archive included) with "уведомления выкл" (archive keeps filling,
+    # only the pings stop) -- the screen text has to say so plainly.
+    t = notify.admin_owners_text([an_owner()], monitor_enabled=True)
+    assert "уведомлен" in t.lower()
+
+
+def test_owners_screen_reports_each_owners_notify_state():
+    muted = an_owner(owner_name="Молчун", notify_enabled=0)
+    loud = an_owner(owner_name="Обычный", notify_enabled=1)
+    t = notify.admin_owners_text([muted, loud], monitor_enabled=True)
+    assert "Молчун" in t and "Обычный" in t
+    muted_line = next(line for line in t.splitlines() if "Молчун" in line)
+    loud_line = next(line for line in t.splitlines() if "Обычный" in line)
+    assert "выкл" in muted_line
+    assert "уведомления" in muted_line and "уведомления" in loud_line
+
+
 def test_retention_screen_states_that_it_applies_to_all_connections():
     t = notify.admin_retention_text(30, owners_count=2)
     assert "всех подключений" in t and "2" in t
@@ -228,6 +248,14 @@ def test_format_bytes_is_readable():
     assert notify.format_bytes(512) == "512 Б"
     assert notify.format_bytes(2048) == "2.0 КБ"
     assert notify.format_bytes(5 * 1024 * 1024) == "5.0 МБ"
+
+
+def test_owners_keyboard_offers_a_notify_toggle_alongside_mirror():
+    owner = an_owner()
+    kb = notify.kb_admin_owners([owner])
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert f"adm:toggle:{owner.id}:notify_enabled" in data
+    assert f"adm:toggle:{owner.id}:mirror_to_admin" in data
 
 
 def test_every_admin_button_uses_the_adm_prefix():

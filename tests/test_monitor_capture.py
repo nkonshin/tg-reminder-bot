@@ -444,6 +444,88 @@ async def test_sent_at_uses_the_message_date_not_the_receive_time(deps):
     assert stored.sent_at.startswith("2026-07-27")
 
 
+async def test_muted_owner_edit_is_journaled_with_zero_sends(deps):
+    # notify_enabled=0 must silence delivery while journaling keeps running --
+    # the archive (export, weekly backup) still needs a correct row.
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="было"), deps, NOW)
+    await deps.store.set_owner_flag(owner.id, "notify_enabled", 0)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало"), deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.text == "стало", "the journal must still be updated while muted"
+    assert stored.edited_at is not None
+    assert deps.bot.sent == []
+
+
+async def test_muted_owner_delete_is_journaled_with_zero_sends(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="секрет"), deps, NOW)
+    await deps.store.set_owner_flag(owner.id, "notify_enabled", 0)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.deleted_at is not None
+    assert deps.bot.sent == []
+
+
+async def test_muted_owner_with_mirror_on_still_sends_nothing(deps):
+    # "notifications off for this connection" must mean nothing is sent --
+    # not "the owner is quiet but the admin still gets pinged".
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="секрет"), deps, NOW)
+    await deps.store.set_owner_flag(owner.id, "notify_enabled", 0)
+    await deps.store.set_owner_flag(owner.id, "mirror_to_admin", 1)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert deps.bot.sent == []
+
+
+async def test_muted_owner_edit_with_mirror_on_still_sends_nothing(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="было"), deps, NOW)
+    await deps.store.set_owner_flag(owner.id, "notify_enabled", 0)
+    await deps.store.set_owner_flag(owner.id, "mirror_to_admin", 1)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало"), deps, NOW)
+    assert deps.bot.sent == []
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "стало"
+
+
+async def test_notify_enabled_default_delivers_normally(deps):
+    # notify_enabled defaults to 1 -- an ordinary, un-muted owner must see no
+    # change in behaviour at all.
+    owner = await connect(deps)
+    assert owner.notify_enabled == 1
+    await capture.on_business_message(a_message(text="было"), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало"), deps, NOW)
+    assert len(deps.bot.sent) == 1
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "стало"
+
+
+async def test_owner_with_monitoring_off_still_journals_and_sends_nothing(deps):
+    # monitor_enabled keeps its old meaning: nothing at all, journal included --
+    # unlike notify_enabled, which only silences delivery.
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="было"), deps, NOW)
+    await deps.store.set_owner_flag(owner.id, "monitor_enabled", 0)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    await capture.on_edited_business_message(a_message(text="стало"), deps, NOW)
+    await capture.on_business_message(a_message(message_id=6, text="новое"), deps, NOW)
+    assert (await deps.store.get_message(owner.id, -1, 5)).deleted_at is None
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "было"
+    assert await deps.store.get_message(owner.id, -1, 6) is None
+    assert deps.bot.sent == []
+
+
 async def test_a_broken_store_does_not_crash_the_connection_handler(deps, monkeypatch):
     async def boom(*a, **kw):
         raise RuntimeError("db exploded")
