@@ -27,14 +27,14 @@ def a_connection(conn_id="conn-1", user_id=100, enabled=True):
 
 
 def a_message(conn_id="conn-1", chat_id=-1, message_id=5, text="привет",
-              user_id=300, name="Собеседник", username=None, **media_fields):
+              user_id=300, name="Собеседник", username=None, is_bot=False, **media_fields):
     fields = dict(photo=None, video=None, video_note=None, voice=None, document=None)
     fields.update(media_fields)
     return SimpleNamespace(business_connection_id=conn_id,
                            chat=SimpleNamespace(id=chat_id),
                            message_id=message_id, text=text, caption=None,
                            from_user=SimpleNamespace(id=user_id, full_name=name,
-                                                     username=username),
+                                                     username=username, is_bot=is_bot),
                            **fields)
 
 
@@ -523,6 +523,63 @@ async def test_owner_with_monitoring_off_still_journals_and_sends_nothing(deps):
     assert (await deps.store.get_message(owner.id, -1, 5)).deleted_at is None
     assert (await deps.store.get_message(owner.id, -1, 5)).text == "было"
     assert await deps.store.get_message(owner.id, -1, 6) is None
+    assert deps.bot.sent == []
+
+
+async def test_a_bot_authored_message_is_not_journaled(deps):
+    # The owner's private chat with this very bot is in scope of the business
+    # connection, so the bot's own panel redraws arrive here as ordinary
+    # business_message updates. They must never be journaled.
+    owner = await connect(deps)
+    await capture.on_business_message(
+        a_message(text="Панель управления", user_id=999, name="Бот", is_bot=True), deps, NOW)
+    assert await deps.store.get_message(owner.id, -1, 5) is None
+    assert deps.bot.sent == []
+
+
+async def test_a_bot_authored_edit_sends_nothing_and_creates_no_row(deps):
+    owner = await connect(deps)
+    await capture.on_edited_business_message(
+        a_message(text="Панель v2", user_id=999, name="Бот", is_bot=True), deps, NOW)
+    assert await deps.store.get_message(owner.id, -1, 5) is None
+    assert deps.bot.sent == []
+
+
+async def test_a_human_message_with_is_bot_false_is_journaled_and_notified_as_before(deps):
+    # Regression guard: explicitly passing is_bot=False must behave exactly
+    # like the pre-existing (implicit) behaviour.
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="было", is_bot=False), deps, NOW)
+    deps.bot.sent.clear()
+    await capture.on_edited_business_message(a_message(text="стало", is_bot=False), deps, NOW)
+    assert len(deps.bot.sent) == 1
+    assert (await deps.store.get_message(owner.id, -1, 5)).text == "стало"
+
+
+async def test_a_message_with_no_from_user_still_journals(deps):
+    owner = await connect(deps)
+    msg = SimpleNamespace(business_connection_id="conn-1", chat=SimpleNamespace(id=-1),
+                          message_id=5, text="привет", caption=None, from_user=None,
+                          photo=None, video=None, video_note=None, voice=None, document=None)
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored is not None and stored.text == "привет"
+    assert stored.from_user_id is None
+
+
+async def test_a_bots_own_notification_reflected_back_is_not_rejournaled(deps):
+    # The worst case: a notification this bot itself sent lands back in the
+    # watched dialog (it's the owner's chat with the bot) and is redelivered
+    # as a business_message. If that were ever journaled and then edited, it
+    # would trigger another notification about a notification -- a feedback
+    # loop. Pin that this can never start.
+    owner = await connect(deps)
+    loop_text = notify.edited_text("Бот", "some_bot", "было", "стало",
+                                   datetime(2026, 7, 30, 13, 0))
+    assert loop_text.startswith("✏️")
+    await capture.on_business_message(
+        a_message(text=loop_text, user_id=999, name="Бот", is_bot=True), deps, NOW)
+    assert await deps.store.get_message(owner.id, -1, 5) is None
     assert deps.bot.sent == []
 
 

@@ -56,6 +56,21 @@ def _authored_by_owner(owner, from_user_id) -> bool:
     return from_user_id is not None and from_user_id == owner.owner_user_id
 
 
+def _authored_by_a_bot(msg) -> bool:
+    """The owner's private chat with this very bot falls inside the business
+    connection's scope, so this bot's own messages -- panel redraws chief
+    among them -- are delivered back here as ordinary business updates.
+    Skipping every bot, not just this one, also covers another bot editing
+    its own messages in the owner's dialogs, and is the only way to catch our
+    own panel here: its user id isn't known at this point.
+
+    Duck-typed on the standard aiogram field (`from_user.is_bot`) rather than
+    an aiogram import -- this module stays free of those. A missing
+    from_user, or a from_user with no is_bot attribute at all, is simply
+    "not a bot", never a crash."""
+    return bool(getattr(getattr(msg, "from_user", None), "is_bot", False))
+
+
 async def _capture_new_message(deps: MonitorDeps, owner, msg, now: datetime, text) -> None:
     """Record a message this journal has not seen before. Metadata is written
     unconditionally -- so a later edit or deletion can still describe it (e.g.
@@ -140,6 +155,8 @@ async def on_business_message(msg, deps: MonitorDeps, now: datetime) -> None:
     owner = await _active_owner(deps, msg.business_connection_id)
     if owner is None:
         return
+    if _authored_by_a_bot(msg):
+        return
     text = msg.text or getattr(msg, "caption", None)
     await _capture_new_message(deps, owner, msg, now, text)
 
@@ -148,6 +165,8 @@ async def on_business_message(msg, deps: MonitorDeps, now: datetime) -> None:
 async def on_edited_business_message(msg, deps: MonitorDeps, now: datetime) -> None:
     owner = await _active_owner(deps, msg.business_connection_id)
     if owner is None:
+        return
+    if _authored_by_a_bot(msg):
         return
     stored = await deps.store.get_message(owner.id, msg.chat.id, msg.message_id)
     new_text = msg.text or getattr(msg, "caption", None)
