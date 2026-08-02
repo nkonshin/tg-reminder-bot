@@ -104,6 +104,48 @@ async def test_media_file_is_downloaded_when_the_kind_is_enabled(deps):
     assert deps.bot.downloads == ["v1"]
 
 
+async def test_a_sticker_message_is_recorded_without_a_download(deps):
+    # No log_sticker column exists at all -- is_enabled_for must fall back to
+    # "off" for it, so a sticker's metadata is journaled but the file itself
+    # is never fetched.
+    owner = await connect(deps)
+    msg = a_message(text=None, sticker=SimpleNamespace(file_id="s1"))
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.media_kind == "sticker" and stored.media_path is None
+    assert deps.bot.downloads == []
+
+
+async def test_a_gif_is_downloaded_when_log_animation_is_enabled(deps):
+    owner = await connect(deps)
+    await deps.store.set_owner_flag(owner.id, "log_animation", 1)
+    msg = a_message(text=None, animation=SimpleNamespace(file_id="g1"))
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.media_path == f"{owner.id}/-1/5.mp4"
+    assert deps.bot.downloads == ["g1"]
+
+
+async def test_a_gif_is_metadata_only_when_log_animation_is_off(deps):
+    owner = await connect(deps)
+    msg = a_message(text=None, animation=SimpleNamespace(file_id="g1"))
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.media_kind == "animation" and stored.media_path is None
+    assert deps.bot.downloads == []
+
+
+async def test_deletion_of_a_sticker_notifies_with_its_label(deps):
+    await connect(deps)
+    msg = a_message(text=None, sticker=SimpleNamespace(file_id="s1"))
+    await capture.on_business_message(msg, deps, NOW)
+    deps.bot.sent.clear()
+    event = SimpleNamespace(business_connection_id="conn-1",
+                            chat=SimpleNamespace(id=-1), message_ids=[5])
+    await capture.on_deleted_business_messages(event, deps, NOW)
+    assert "стикер" in deps.bot.sent[0].text
+
+
 async def test_edit_notifies_with_both_versions(deps):
     owner = await connect(deps)
     await capture.on_business_message(a_message(text="было"), deps, NOW)

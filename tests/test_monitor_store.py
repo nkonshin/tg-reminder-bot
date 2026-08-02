@@ -105,6 +105,47 @@ async def test_init_migrates_an_older_owners_table_and_defaults_notify_enabled_o
     assert row == (100, 1)  # the pre-existing row survives and stays notified
 
 
+async def test_init_migrates_an_owners_table_missing_log_animation(tmp_path):
+    # A live DB created before log_animation existed must gain the column and
+    # default OFF -- an existing connection must not suddenly start
+    # downloading gifs just because the process was upgraded.
+    path = str(tmp_path / "old_no_animation.sqlite3")
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE owners (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          business_connection_id TEXT NOT NULL UNIQUE,
+          owner_user_id INTEGER NOT NULL,
+          owner_name TEXT,
+          is_enabled INTEGER NOT NULL DEFAULT 1,
+          monitor_enabled INTEGER NOT NULL DEFAULT 1,
+          mirror_to_admin INTEGER NOT NULL DEFAULT 0,
+          notify_enabled INTEGER NOT NULL DEFAULT 1,
+          retention_days INTEGER,
+          log_photo INTEGER NOT NULL DEFAULT 0,
+          log_video INTEGER NOT NULL DEFAULT 0,
+          log_video_note INTEGER NOT NULL DEFAULT 0,
+          log_voice INTEGER NOT NULL DEFAULT 0,
+          log_document INTEGER NOT NULL DEFAULT 0,
+          connected_at TEXT NOT NULL
+        );
+        INSERT INTO owners (business_connection_id, owner_user_id, owner_name, connected_at)
+        VALUES ('conn-old', 100, 'Owner', '2026-07-01T00:00:00+00:00');
+    """)
+    con.commit()
+    con.close()
+
+    s = MonitorStore(path)
+    await s.init()
+
+    con = sqlite3.connect(path)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(owners)")}
+    assert "log_animation" in cols
+    row = con.execute("SELECT log_animation FROM owners "
+                      "WHERE business_connection_id='conn-old'").fetchone()
+    assert row == (0,)  # must default off, not silently start downloading gifs
+
+
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
 
 
@@ -125,6 +166,13 @@ async def test_owner_toggle_roundtrip(store):
     assert o.log_photo == 0
     await store.set_owner_flag(o.id, "log_photo", 1)
     assert (await store.get_owner_by_id(o.id)).log_photo == 1
+
+
+async def test_owner_animation_toggle_defaults_off_and_roundtrips(store):
+    o = await make_owner(store)
+    assert o.log_animation == 0
+    await store.set_owner_flag(o.id, "log_animation", 1)
+    assert (await store.get_owner_by_id(o.id)).log_animation == 1
 
 
 async def test_record_and_read_message(store):

@@ -41,6 +41,11 @@ KIND_LABELS = {
     "video_note": "кружок",
     "voice": "голосовое",
     "document": "документ",
+    "sticker": "стикер",
+    "animation": "гифка",
+    "location": "геолокация",
+    "contact": "контакт",
+    "poll": "опрос",
 }
 
 
@@ -277,7 +282,7 @@ def kb_admin_media(owner, back: str = "adm:main") -> InlineKeyboardMarkup:
         [_toggle(owner, "log_photo", "Фото"), _toggle(owner, "log_video", "Видео")],
         [_toggle(owner, "log_video_note", "Кружки"),
          _toggle(owner, "log_voice", "Голосовые")],
-        [_toggle(owner, "log_document", "Документы")],
+        [_toggle(owner, "log_document", "Документы"), _toggle(owner, "log_animation", "Гифки")],
         [("Назад", back)],
     ])
 

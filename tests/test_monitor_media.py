@@ -31,6 +31,52 @@ def test_detect_kind_returns_nothing_for_plain_text():
     assert media.detect_kind(msg) == (None, None)
 
 
+def test_detect_kind_handles_a_sticker():
+    msg = SimpleNamespace(photo=None, video=None, video_note=None, voice=None, document=None,
+                          animation=None, sticker=SimpleNamespace(file_id="s1"),
+                          location=None, contact=None, poll=None)
+    assert media.detect_kind(msg) == ("sticker", "s1")
+
+
+def test_detect_kind_handles_a_gif():
+    msg = SimpleNamespace(photo=None, video=None, video_note=None, voice=None, document=None,
+                          animation=SimpleNamespace(file_id="g1"), sticker=None,
+                          location=None, contact=None, poll=None)
+    assert media.detect_kind(msg) == ("animation", "g1")
+
+
+def test_detect_kind_prefers_animation_over_document():
+    # A GIF can also surface a `document` field on some clients; `animation`
+    # is the accurate kind and must win.
+    msg = SimpleNamespace(photo=None, video=None, video_note=None, voice=None,
+                          document=SimpleNamespace(file_id="doc1"),
+                          animation=SimpleNamespace(file_id="g1"), sticker=None,
+                          location=None, contact=None, poll=None)
+    assert media.detect_kind(msg) == ("animation", "g1")
+
+
+def test_detect_kind_handles_a_location():
+    msg = SimpleNamespace(photo=None, video=None, video_note=None, voice=None, document=None,
+                          animation=None, sticker=None,
+                          location=SimpleNamespace(latitude=1.0, longitude=2.0),
+                          contact=None, poll=None)
+    assert media.detect_kind(msg) == ("location", None)
+
+
+def test_detect_kind_handles_a_contact():
+    msg = SimpleNamespace(photo=None, video=None, video_note=None, voice=None, document=None,
+                          animation=None, sticker=None, location=None,
+                          contact=SimpleNamespace(phone_number="+10000000000"), poll=None)
+    assert media.detect_kind(msg) == ("contact", None)
+
+
+def test_detect_kind_handles_a_poll():
+    msg = SimpleNamespace(photo=None, video=None, video_note=None, voice=None, document=None,
+                          animation=None, sticker=None, location=None, contact=None,
+                          poll=SimpleNamespace(question="Когда?"))
+    assert media.detect_kind(msg) == ("poll", None)
+
+
 @pytest.fixture
 async def owner(tmp_path):
     s = MonitorStore(str(tmp_path / "t.sqlite3"))
@@ -49,6 +95,13 @@ async def test_download_writes_a_file_and_returns_its_relative_path(tmp_path):
     rel = await media.download(bot, cfg, 1, -1, 55, "photo", "file-1")
     assert rel == "1/-1/55.jpg"
     assert (tmp_path / "media" / rel).read_bytes() == b"fake-bytes"
+
+
+async def test_download_uses_mp4_for_an_animation(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    rel = await media.download(bot, cfg, 1, -1, 55, "animation", "gif-1")
+    assert rel == "1/-1/55.mp4"
 
 
 async def test_download_returns_none_when_telegram_fails(tmp_path):
