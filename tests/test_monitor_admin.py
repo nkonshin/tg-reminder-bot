@@ -43,6 +43,14 @@ async def test_animation_toggle_flips_the_flag(deps):
     assert (await deps.store.get_owner_by_id(owner.id)).log_animation == 0
 
 
+async def test_audio_toggle_flips_the_flag(deps):
+    owner = (await deps.store.list_owners())[0]
+    await admin.handle_callback(f"adm:toggle:{owner.id}:log_audio", deps, 200, NOW)
+    assert (await deps.store.get_owner_by_id(owner.id)).log_audio == 1
+    await admin.handle_callback(f"adm:toggle:{owner.id}:log_audio", deps, 200, NOW)
+    assert (await deps.store.get_owner_by_id(owner.id)).log_audio == 0
+
+
 async def test_toggle_is_ignored_for_a_non_admin(deps):
     owner = (await deps.store.list_owners())[0]
     assert await admin.handle_callback(f"adm:toggle:{owner.id}:log_photo", deps, 100, NOW) is None

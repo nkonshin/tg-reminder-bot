@@ -77,6 +77,47 @@ def test_detect_kind_handles_a_poll():
     assert media.detect_kind(msg) == ("poll", None)
 
 
+def _blank_msg(**over):
+    fields = dict(photo=None, video=None, video_note=None, voice=None, document=None,
+                  animation=None, sticker=None, venue=None, location=None, contact=None,
+                  poll=None, dice=None, story=None, game=None, audio=None)
+    fields.update(over)
+    return SimpleNamespace(**fields)
+
+
+def test_detect_kind_handles_audio():
+    msg = _blank_msg(audio=SimpleNamespace(file_id="a1"))
+    assert media.detect_kind(msg) == ("audio", "a1")
+
+
+def test_detect_kind_handles_a_dice():
+    msg = _blank_msg(dice=SimpleNamespace(emoji="🎲", value=4))
+    assert media.detect_kind(msg) == ("dice", None)
+
+
+def test_detect_kind_handles_a_story():
+    msg = _blank_msg(story=SimpleNamespace(id=1))
+    assert media.detect_kind(msg) == ("story", None)
+
+
+def test_detect_kind_handles_a_venue():
+    msg = _blank_msg(venue=SimpleNamespace(title="Кафе"))
+    assert media.detect_kind(msg) == ("venue", None)
+
+
+def test_detect_kind_handles_a_game():
+    msg = _blank_msg(game=SimpleNamespace(title="Игра"))
+    assert media.detect_kind(msg) == ("game", None)
+
+
+def test_detect_kind_prefers_venue_over_location():
+    # A venue message also carries a location field; venue is the more
+    # specific kind and must win.
+    msg = _blank_msg(venue=SimpleNamespace(title="Кафе"),
+                     location=SimpleNamespace(latitude=1.0, longitude=2.0))
+    assert media.detect_kind(msg) == ("venue", None)
+
+
 @pytest.fixture
 async def owner(tmp_path):
     s = MonitorStore(str(tmp_path / "t.sqlite3"))
@@ -102,6 +143,13 @@ async def test_download_uses_mp4_for_an_animation(tmp_path):
     bot = FakeBot()
     rel = await media.download(bot, cfg, 1, -1, 55, "animation", "gif-1")
     assert rel == "1/-1/55.mp4"
+
+
+async def test_download_uses_mp3_for_audio(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    rel = await media.download(bot, cfg, 1, -1, 55, "audio", "track-1")
+    assert rel == "1/-1/55.mp3"
 
 
 async def test_download_returns_none_when_telegram_fails(tmp_path):

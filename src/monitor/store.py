@@ -29,6 +29,7 @@ OWNER_COLUMNS = [
     ("log_voice", "INTEGER NOT NULL DEFAULT 0"),
     ("log_document", "INTEGER NOT NULL DEFAULT 0"),
     ("log_animation", "INTEGER NOT NULL DEFAULT 0"),
+    ("log_audio", "INTEGER NOT NULL DEFAULT 0"),
     ("connected_at", "TEXT NOT NULL"),
 ]
 
@@ -66,6 +67,7 @@ class Owner:
     log_voice: int
     log_document: int
     log_animation: int
+    log_audio: int
     connected_at: str
 
 
@@ -99,7 +101,7 @@ MEDIA_KINDS = ("photo", "video", "video_note", "voice", "document")
 # crafted callback from overwriting an arbitrary column.
 TOGGLEABLE = ("monitor_enabled", "mirror_to_admin", "notify_enabled",
               "log_photo", "log_video", "log_video_note", "log_voice", "log_document",
-              "log_animation")
+              "log_animation", "log_audio")
 
 
 def _create_sql(table: str, columns) -> str:

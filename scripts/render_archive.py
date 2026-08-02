@@ -30,10 +30,12 @@ MEDIA_SUBDIR = "media"
 KIND_LABEL = {"photo": "фото", "video": "видео", "video_note": "кружок",
               "voice": "голосовое", "document": "документ", "animation": "гифка",
               "sticker": "стикер", "location": "геолокация", "contact": "контакт",
-              "poll": "опрос"}
+              "poll": "опрос", "audio": "музыка", "dice": "эмодзи-кубик",
+              "story": "история", "venue": "место", "game": "игра"}
 # Kinds that never have a downloadable file (no log_* toggle exists for them):
 # always a labelled chip, regardless of media_path, never a broken embed.
-NO_FILE_CHIP_ICON = {"sticker": "🎨", "location": "📍", "contact": "👤", "poll": "📊"}
+NO_FILE_CHIP_ICON = {"sticker": "🎨", "location": "📍", "contact": "👤", "poll": "📊",
+                     "venue": "📍", "dice": "🎲", "story": "📖", "game": "🎮"}
 # stable, readable colours for sender names, picked by hashing the user id
 NAME_COLORS = ["#e17076", "#7bc862", "#e5ca77", "#65aadd", "#a695e7",
                "#ee7aae", "#6ec9cb", "#faa774"]
@@ -115,8 +117,8 @@ def media_html(row, archive_dir):
         return ""
     label = KIND_LABEL.get(kind, kind)
     if kind in NO_FILE_CHIP_ICON:
-        # sticker/location/contact/poll are never downloaded -- always a chip,
-        # media_path is always NULL for these.
+        # sticker/location/contact/poll/venue/dice/story/game are never
+        # downloaded -- always a chip, media_path is always NULL for these.
         return f'<div class="chip">{NO_FILE_CHIP_ICON[kind]} {html.escape(label)}</div>'
     rel = row["media_path"]
     if not rel or not os.path.exists(os.path.join(archive_dir, MEDIA_SUBDIR, rel)):
@@ -132,7 +134,7 @@ def media_html(row, archive_dir):
         # Gif-like: silent, looping, plays without a click.
         return (f'<video class="vid" autoplay muted loop playsinline '
                 f'src="{src}"></video>')
-    if kind == "voice":
+    if kind in ("voice", "audio"):
         return f'<audio controls src="{src}"></audio>'
     return f'<a class="chip" href="{src}" target="_blank">📎 {html.escape(label)}</a>'
 

@@ -146,6 +146,34 @@ async def test_deletion_of_a_sticker_notifies_with_its_label(deps):
     assert "стикер" in deps.bot.sent[0].text
 
 
+async def test_a_dice_message_is_recorded_without_a_download(deps):
+    owner = await connect(deps)
+    msg = a_message(text=None, dice=SimpleNamespace(emoji="🎲", value=4))
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.media_kind == "dice" and stored.media_path is None
+    assert deps.bot.downloads == []
+
+
+async def test_an_audio_file_is_downloaded_when_log_audio_is_enabled(deps):
+    owner = await connect(deps)
+    await deps.store.set_owner_flag(owner.id, "log_audio", 1)
+    msg = a_message(text=None, audio=SimpleNamespace(file_id="a1"))
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.media_path == f"{owner.id}/-1/5.mp3"
+    assert deps.bot.downloads == ["a1"]
+
+
+async def test_an_audio_file_is_metadata_only_when_log_audio_is_off(deps):
+    owner = await connect(deps)
+    msg = a_message(text=None, audio=SimpleNamespace(file_id="a1"))
+    await capture.on_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.media_kind == "audio" and stored.media_path is None
+    assert deps.bot.downloads == []
+
+
 async def test_edit_notifies_with_both_versions(deps):
     owner = await connect(deps)
     await capture.on_business_message(a_message(text="было"), deps, NOW)

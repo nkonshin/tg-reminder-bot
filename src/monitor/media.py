@@ -4,13 +4,13 @@ import os
 
 log = logging.getLogger(__name__)
 
-# Extension per kind: Telegram re-encodes photos to JPEG, voice to OGG and
-# video notes/animations to MP4, so a fixed extension is accurate enough for
-# an archive. sticker/location/contact/poll have no entry -- they are never
-# downloaded (see detect_kind and is_enabled_for below), so download() never
-# looks one up for them.
+# Extension per kind: Telegram re-encodes photos to JPEG, voice to OGG,
+# video notes/animations to MP4 and audio to MP3, so a fixed extension is
+# accurate enough for an archive. sticker/venue/location/contact/poll/dice/
+# story/game have no entry -- they are never downloaded (see detect_kind and
+# is_enabled_for below), so download() never looks one up for them.
 EXTENSIONS = {"photo": "jpg", "video": "mp4", "video_note": "mp4",
-              "voice": "ogg", "document": "bin", "animation": "mp4"}
+              "voice": "ogg", "document": "bin", "animation": "mp4", "audio": "mp3"}
 
 
 def detect_kind(msg) -> tuple[str | None, str | None]:
@@ -21,20 +21,30 @@ def detect_kind(msg) -> tuple[str | None, str | None]:
     # kind and must win.
     if getattr(msg, "animation", None):
         return "animation", msg.animation.file_id
-    for kind in ("video", "video_note", "voice", "document"):
+    for kind in ("video", "video_note", "voice", "document", "audio"):
         obj = getattr(msg, kind, None)
         if obj is not None:
             return kind, obj.file_id
     if getattr(msg, "sticker", None):
         return "sticker", msg.sticker.file_id
     # No downloadable file for these -- metadata only, so a later deletion can
-    # still say what kind of message it was.
+    # still say what kind of message it was. `venue` is checked before
+    # `location`: a venue message also carries a location field, but `venue`
+    # is the more specific kind and must win.
+    if getattr(msg, "venue", None):
+        return "venue", None
     if getattr(msg, "location", None):
         return "location", None
     if getattr(msg, "contact", None):
         return "contact", None
     if getattr(msg, "poll", None):
         return "poll", None
+    if getattr(msg, "dice", None):
+        return "dice", None
+    if getattr(msg, "story", None):
+        return "story", None
+    if getattr(msg, "game", None):
+        return "game", None
     return None, None
 
 

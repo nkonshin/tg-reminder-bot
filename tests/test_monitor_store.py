@@ -146,6 +146,47 @@ async def test_init_migrates_an_owners_table_missing_log_animation(tmp_path):
     assert row == (0,)  # must default off, not silently start downloading gifs
 
 
+async def test_init_migrates_an_owners_table_missing_log_audio(tmp_path):
+    # A live DB created before log_audio existed (but after log_animation)
+    # must gain the column and default OFF.
+    path = str(tmp_path / "old_no_audio.sqlite3")
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE owners (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          business_connection_id TEXT NOT NULL UNIQUE,
+          owner_user_id INTEGER NOT NULL,
+          owner_name TEXT,
+          is_enabled INTEGER NOT NULL DEFAULT 1,
+          monitor_enabled INTEGER NOT NULL DEFAULT 1,
+          mirror_to_admin INTEGER NOT NULL DEFAULT 0,
+          notify_enabled INTEGER NOT NULL DEFAULT 1,
+          retention_days INTEGER,
+          log_photo INTEGER NOT NULL DEFAULT 0,
+          log_video INTEGER NOT NULL DEFAULT 0,
+          log_video_note INTEGER NOT NULL DEFAULT 0,
+          log_voice INTEGER NOT NULL DEFAULT 0,
+          log_document INTEGER NOT NULL DEFAULT 0,
+          log_animation INTEGER NOT NULL DEFAULT 0,
+          connected_at TEXT NOT NULL
+        );
+        INSERT INTO owners (business_connection_id, owner_user_id, owner_name, connected_at)
+        VALUES ('conn-old', 100, 'Owner', '2026-07-01T00:00:00+00:00');
+    """)
+    con.commit()
+    con.close()
+
+    s = MonitorStore(path)
+    await s.init()
+
+    con = sqlite3.connect(path)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(owners)")}
+    assert "log_audio" in cols
+    row = con.execute("SELECT log_audio FROM owners "
+                      "WHERE business_connection_id='conn-old'").fetchone()
+    assert row == (0,)  # must default off, not silently start downloading audio
+
+
 NOW = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
 
 
@@ -173,6 +214,13 @@ async def test_owner_animation_toggle_defaults_off_and_roundtrips(store):
     assert o.log_animation == 0
     await store.set_owner_flag(o.id, "log_animation", 1)
     assert (await store.get_owner_by_id(o.id)).log_animation == 1
+
+
+async def test_owner_audio_toggle_defaults_off_and_roundtrips(store):
+    o = await make_owner(store)
+    assert o.log_audio == 0
+    await store.set_owner_flag(o.id, "log_audio", 1)
+    assert (await store.get_owner_by_id(o.id)).log_audio == 1
 
 
 async def test_record_and_read_message(store):

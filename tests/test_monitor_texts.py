@@ -22,7 +22,7 @@ def an_owner(**over):
                 owner_name="Кто-то", is_enabled=1, monitor_enabled=1, mirror_to_admin=0,
                 notify_enabled=1,
                 retention_days=None, log_photo=0, log_video=0, log_video_note=0,
-                log_voice=0, log_document=0, log_animation=0,
+                log_voice=0, log_document=0, log_animation=0, log_audio=0,
                 connected_at="2026-07-30T13:00:00+00:00")
     base.update(over)
     return Owner(**base)
@@ -76,6 +76,14 @@ def test_kind_label_covers_the_new_kinds():
 def test_deleted_text_names_a_sticker():
     t = notify.deleted_text("Кто-то", None, a_message(text=None, media_kind="sticker"), WHEN)
     assert "стикер" in t
+
+
+def test_kind_label_covers_the_second_batch_of_new_kinds():
+    assert notify.kind_label("audio") == "музыка"
+    assert notify.kind_label("dice") == "эмодзи-кубик"
+    assert notify.kind_label("story") == "история"
+    assert notify.kind_label("venue") == "место"
+    assert notify.kind_label("game") == "игра"
 
 
 def test_deleted_unknown_says_content_was_not_stored():
@@ -277,6 +285,13 @@ def test_media_keyboard_offers_an_animation_toggle():
     kb = notify.kb_admin_media(owner)
     data = [b.callback_data for row in kb.inline_keyboard for b in row]
     assert f"adm:toggle:{owner.id}:log_animation" in data
+
+
+def test_media_keyboard_offers_an_audio_toggle():
+    owner = an_owner()
+    kb = notify.kb_admin_media(owner)
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert f"adm:toggle:{owner.id}:log_audio" in data
 
 
 def test_every_admin_button_uses_the_adm_prefix():
