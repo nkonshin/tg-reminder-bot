@@ -100,15 +100,37 @@ def name_color(user_id):
     return NAME_COLORS[(user_id or 0) % len(NAME_COLORS)]
 
 
-def fmt_time(iso, offset_hours):
+MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+              "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+def _local_dt(iso, offset_hours):
+    """The stored UTC time shifted into the display timezone, or None."""
     try:
         dt = datetime.fromisoformat(iso)
     except (ValueError, TypeError):
-        return iso or ""
+        return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     ts = dt.astimezone(timezone.utc).timestamp() + offset_hours * 3600
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d.%m %H:%M")
+    return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+def fmt_time(iso, offset_hours):
+    dt = _local_dt(iso, offset_hours)
+    return dt.strftime("%d.%m %H:%M") if dt else (iso or "")
+
+
+def day_key(iso, offset_hours):
+    """ISO date (YYYY-MM-DD) of a message in display-local time, for the date
+    jump — the anchors and the picker share this key."""
+    dt = _local_dt(iso, offset_hours)
+    return dt.strftime("%Y-%m-%d") if dt else ""
+
+
+def day_label(iso, offset_hours):
+    dt = _local_dt(iso, offset_hours)
+    return f"{dt.day} {MONTHS_GEN[dt.month - 1]} {dt.year}" if dt else ""
 
 
 def media_html(row, archive_dir):
@@ -163,7 +185,22 @@ def message_html(row, my_id, archive_dir, offset):
     if row["edited_at"]:
         tags.append('<span class="tag ed">изменено</span>')
     meta = f'<div class="meta">{fmt_time(row["sent_at"], offset)} {"".join(tags)}</div>'
-    return f'<div class="{" ".join(classes)}">{"".join(parts)}{meta}</div>'
+    dd = day_key(row["sent_at"], offset)
+    return f'<div class="{" ".join(classes)}" data-date="{dd}">{"".join(parts)}{meta}</div>'
+
+
+def feed_body(chat_rows, my_id, archive_dir, offset):
+    """Messages interleaved with a date separator whenever the day changes.
+    The separators are also the jump targets for the date picker."""
+    out, prev_day = [], None
+    for r in chat_rows:
+        dk = day_key(r["sent_at"], offset)
+        if dk != prev_day:
+            out.append(f'<div class="daysep" data-date="{dk}">'
+                       f'{html.escape(day_label(r["sent_at"], offset))}</div>')
+            prev_day = dk
+        out.append(message_html(r, my_id, archive_dir, offset))
+    return "".join(out)
 
 
 PAGE_CSS = """
@@ -185,11 +222,15 @@ display:flex;justify-content:space-between;gap:8px}
 .chat-item .ct{color:var(--dim);font-size:12px;flex:none}
 .chat-item.active .ct{color:#cfe0f0}
 #main{flex:1;display:flex;flex-direction:column;min-width:0}
-#head{padding:13px 20px;background:var(--panel);border-bottom:1px solid var(--line);
-font-weight:600;font-size:16px}
+#head{padding:11px 20px;background:var(--panel);border-bottom:1px solid var(--line);
+font-weight:600;font-size:16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 #head small{color:var(--dim);font-weight:400;font-size:13px;margin-left:8px}
+#datepick{background:#0e1621;color:var(--ink);border:1px solid var(--line);
+border-radius:8px;padding:5px 8px;font-size:13px;color-scheme:dark;flex:none}
 #feed{flex:1;overflow-y:auto;padding:20px 16px;display:flex;flex-direction:column}
 .feed{display:none;flex-direction:column;gap:3px}
+.daysep{align-self:center;background:#0e1621;color:var(--dim);font-size:12px;
+padding:3px 12px;border-radius:10px;margin:10px 0;position:sticky;top:4px}
 .msg{max-width:64%;padding:6px 11px;border-radius:14px;word-wrap:break-word;margin-bottom:1px}
 .msg.theirs{background:var(--theirs);align-self:flex-start;border-bottom-left-radius:4px}
 .msg.mine{background:var(--mine);align-self:flex-end;border-bottom-right-radius:4px}
@@ -212,14 +253,28 @@ border-radius:8px;font-size:12px;text-decoration:none}
 PAGE_JS = """
 const items=[...document.querySelectorAll('.chat-item')];
 const feeds=[...document.querySelectorAll('.feed')];
-const head=document.getElementById('head');
+const title=document.getElementById('title');
+const feed=document.getElementById('feed');
+const pick=document.getElementById('datepick');
+let activeFeed=null;
 function show(key){
   const it=items.find(i=>i.dataset.key===key);
   feeds.forEach(f=>f.style.display=f.dataset.key===key?'flex':'none');
   items.forEach(i=>i.classList.toggle('active',i.dataset.key===key));
-  head.innerHTML=it.dataset.name+' <small>'+it.dataset.acct+' · '+it.dataset.count+' сообщ.</small>';
-  document.getElementById('feed').scrollTop=0;
+  title.innerHTML=it.dataset.name+' <small>'+it.dataset.acct+' · '+it.dataset.count+' сообщ.</small>';
+  activeFeed=feeds.find(f=>f.dataset.key===key);
+  // bound the date picker to this conversation's own range
+  const dates=[...activeFeed.querySelectorAll('[data-date]')].map(e=>e.dataset.date).filter(Boolean).sort();
+  pick.min=dates[0]||''; pick.max=dates[dates.length-1]||''; pick.value='';
+  feed.scrollTop=0;
 }
+pick.addEventListener('change',()=>{
+  if(!activeFeed||!pick.value) return;
+  const anchors=[...activeFeed.querySelectorAll('[data-date]')];
+  // first element on or after the chosen day, so an empty day lands on the next one
+  const target=anchors.find(e=>e.dataset.date>=pick.value)||anchors[anchors.length-1];
+  if(target) target.scrollIntoView({block:'start'});
+});
 items.forEach(i=>i.addEventListener('click',()=>show(i.dataset.key)));
 if(items.length)show(items[0].dataset.key);
 """
@@ -252,13 +307,15 @@ def render(rows, owners, archive_dir, offset):
                 f'<div class="chat-item" data-key="{key}" data-name="{title}" '
                 f'data-acct="{html.escape(acct_name)}" data-count="{len(crs)}">'
                 f'<span class="nm">{title}</span><span class="ct">{len(crs)}</span></div>')
-            msgs = "".join(message_html(r, my_id, archive_dir, offset) for r in crs)
-            feeds.append(f'<div class="feed" data-key="{key}">{msgs}</div>')
+            feeds.append(f'<div class="feed" data-key="{key}">'
+                         f'{feed_body(crs, my_id, archive_dir, offset)}</div>')
 
     return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <title>Архив переписки</title><style>{PAGE_CSS}</style></head><body>
 <div id="chats">{"".join(sidebar)}</div>
-<div id="main"><div id="head"></div><div id="feed">{"".join(feeds)}</div></div>
+<div id="main"><div id="head"><span id="title"></span>
+<input type="date" id="datepick" title="перейти к дате"></div>
+<div id="feed">{"".join(feeds)}</div></div>
 <script>{PAGE_JS}</script></body></html>"""
 
 
