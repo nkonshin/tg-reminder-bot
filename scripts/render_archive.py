@@ -322,9 +322,13 @@ def render(rows, owners, archive_dir, offset):
 def main():
     args = parse_args()
     archive_dir = os.path.abspath(args.archive_dir)
-    db_path = os.path.join(archive_dir, "messages.sqlite3")
-    if not os.path.isfile(db_path):
-        raise SystemExit(f"no messages.sqlite3 in {archive_dir}")
+    # A one-off export unpacks to "messages.sqlite3"; the weekly backup keeps
+    # the ever-growing merge as "master.sqlite3". Render whichever is present.
+    db_path = next((os.path.join(archive_dir, n) for n in
+                    ("messages.sqlite3", "master.sqlite3")
+                    if os.path.isfile(os.path.join(archive_dir, n))), None)
+    if db_path is None:
+        raise SystemExit(f"no messages.sqlite3 or master.sqlite3 in {archive_dir}")
 
     rows, owners = load(db_path)
     if not rows:

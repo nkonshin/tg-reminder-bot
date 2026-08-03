@@ -8,3 +8,6 @@ data/
 .DS_Store
 docs/
 .superpowers/
+
+# local message archive (private correspondence — never commit)
+archive/
