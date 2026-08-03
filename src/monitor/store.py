@@ -94,8 +94,6 @@ class StoredMessage:
 OWNER_COLS = ", ".join(f.name for f in fields(Owner))
 MESSAGE_COLS = ", ".join(f.name for f in fields(StoredMessage))
 
-MEDIA_KINDS = ("photo", "video", "video_note", "voice", "document")
-
 # Fields set_owner_flag() is allowed to write. The admin panel builds these
 # callbacks from user-tapped buttons, so this whitelist is what stops a
 # crafted callback from overwriting an arbitrary column.
