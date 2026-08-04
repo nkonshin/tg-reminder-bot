@@ -184,7 +184,10 @@ def message_html(row, my_id, archive_dir, offset):
         tags.append('<span class="tag del">удалено</span>')
     if row["edited_at"]:
         tags.append('<span class="tag ed">изменено</span>')
-    meta = f'<div class="meta">{fmt_time(row["sent_at"], offset)} {"".join(tags)}</div>'
+    uname = (f'<span class="uname">@{html.escape(row["from_username"])}</span> '
+             if row["from_username"] else "")
+    meta = (f'<div class="meta">{uname}{fmt_time(row["sent_at"], offset)} '
+            f'{"".join(tags)}</div>')
     dd = day_key(row["sent_at"], offset)
     return f'<div class="{" ".join(classes)}" data-date="{dd}">{"".join(parts)}{meta}</div>'
 
@@ -240,6 +243,7 @@ padding:3px 12px;border-radius:10px;margin:10px 0;position:sticky;top:4px}
 .txt{white-space:pre-wrap}
 .txt.empty{color:var(--dim);font-style:italic}
 .meta{font-size:11px;color:var(--dim);margin-top:3px;text-align:right}
+.uname{color:#8ecdf0;opacity:.85}
 .tag{font-size:10px;padding:1px 5px;border-radius:6px;margin-left:5px}
 .tag.del{background:var(--rust);color:#fff}
 .tag.ed{background:#3a4a5a;color:#cfe0f0}
