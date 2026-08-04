@@ -56,11 +56,17 @@ def load(db_path):
     con.row_factory = sqlite3.Row
     cols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
     has_username = "from_username" in cols
+    # An export/backup taken before forward attribution shipped has neither
+    # column -- fall back to NULL so an older archive still loads instead of
+    # raising, same as the has_username fallback just above.
+    has_forward = "forward_from_name" in cols
     rows = list(con.execute(
         "SELECT owner_id, chat_id, message_id, from_user_id, from_name, "
         + ("from_username, " if has_username else "NULL AS from_username, ")
-        + "text, media_kind, media_path, sent_at, edited_at, deleted_at "
-        "FROM messages ORDER BY owner_id, chat_id, sent_at, message_id"))
+        + "text, media_kind, media_path, sent_at, edited_at, deleted_at, "
+        + ("forward_from_name, forward_from_username "
+           if has_forward else "NULL AS forward_from_name, NULL AS forward_from_username ")
+        + "FROM messages ORDER BY owner_id, chat_id, sent_at, message_id"))
     owners = {}
     try:
         for r in con.execute("SELECT id, owner_user_id, owner_name FROM owners"):
@@ -173,6 +179,13 @@ def message_html(row, my_id, archive_dir, offset):
     if not mine and row["from_name"]:
         c = name_color(row["from_user_id"])
         parts.append(f'<div class="who" style="color:{c}">{html.escape(row["from_name"])}</div>')
+    if row["forward_from_name"]:
+        who = html.escape(row["forward_from_name"])
+        if row["forward_from_username"]:
+            who = f'<b>{who}</b> (@{html.escape(row["forward_from_username"])})'
+        else:
+            who = f'<b>{who}</b>'
+        parts.append(f'<div class="fwd">↩ Переслано от {who}</div>')
     media = media_html(row, archive_dir)
     if media:
         parts.append(media)
@@ -242,6 +255,9 @@ padding:3px 12px;border-radius:10px;margin:10px 0;position:sticky;top:4px}
 .msg.deleted{outline:1px solid var(--rust);opacity:.9}
 .msg.deleted .txt{text-decoration:line-through;text-decoration-color:var(--rust)}
 .who{font-size:12px;font-weight:600;margin-bottom:2px}
+.fwd{font-size:12px;color:var(--dim);border-left:2px solid #4a5b6c;padding-left:7px;
+margin-bottom:4px}
+.fwd b{color:var(--ink)}
 .txt{white-space:pre-wrap}
 .txt.empty{color:var(--dim);font-style:italic}
 .meta{font-size:11px;color:var(--dim);margin-top:3px;text-align:right}

@@ -47,6 +47,8 @@ MESSAGE_COLUMNS = [
     ("sent_at", "TEXT NOT NULL"),
     ("edited_at", "TEXT"),
     ("deleted_at", "TEXT"),
+    ("forward_from_name", "TEXT"),
+    ("forward_from_username", "TEXT"),
 ]
 
 
@@ -89,6 +91,11 @@ class StoredMessage:
     # existing positional/keyword construction of this dataclass across the
     # codebase keeps working unchanged.
     from_username: str | None = None
+    # Set only when the message was forwarded from someone else; both None
+    # for an ordinary message. Same append-at-the-end-with-a-default reasoning
+    # as from_username above.
+    forward_from_name: str | None = None
+    forward_from_username: str | None = None
 
 
 OWNER_COLS = ", ".join(f.name for f in fields(Owner))
@@ -189,18 +196,22 @@ class MonitorStore:
 
     async def record_message(self, owner_id, chat_id, message_id, from_user_id,
                              from_name, text, media_kind, media_path, sent_at,
-                             from_username=None) -> None:
+                             from_username=None, forward_from_name=None,
+                             forward_from_username=None) -> None:
         # OR IGNORE: Telegram can redeliver an update; the first version wins so
         # a redelivery never overwrites an edit we already recorded.
-        # from_username is keyword-only-by-convention and defaulted so every
-        # existing positional call site (tests, other callers) keeps working
-        # unchanged; only capture.py currently passes it explicitly.
+        # from_username/forward_from_* are keyword-only-by-convention and
+        # defaulted so every existing positional call site (tests, other
+        # callers) keeps working unchanged; only capture.py currently passes
+        # them explicitly.
         await self._exec(
             "INSERT OR IGNORE INTO messages (owner_id, chat_id, message_id, from_user_id, "
-            "from_name, from_username, text, media_kind, media_path, sent_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "from_name, from_username, text, media_kind, media_path, sent_at, "
+            "forward_from_name, forward_from_username) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (owner_id, chat_id, message_id, from_user_id, from_name, from_username,
-             text, media_kind, media_path, to_iso(sent_at)))
+             text, media_kind, media_path, to_iso(sent_at),
+             forward_from_name, forward_from_username))
 
     async def get_message(self, owner_id, chat_id, message_id) -> "StoredMessage | None":
         return await self._row(

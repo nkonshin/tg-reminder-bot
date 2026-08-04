@@ -65,6 +65,45 @@ async def test_init_migrates_an_older_messages_table(tmp_path):
            "from_name", "from_username"} <= cols
 
 
+async def test_init_migrates_a_messages_table_missing_forward_columns(tmp_path):
+    # A live DB created before forward attribution existed must gain the two
+    # new columns and keep every existing row intact, forward fields NULL.
+    path = str(tmp_path / "old_no_forward.sqlite3")
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          owner_id INTEGER NOT NULL,
+          chat_id INTEGER NOT NULL,
+          message_id INTEGER NOT NULL,
+          from_user_id INTEGER,
+          from_name TEXT,
+          from_username TEXT,
+          text TEXT,
+          media_kind TEXT,
+          media_path TEXT,
+          sent_at TEXT NOT NULL,
+          edited_at TEXT,
+          deleted_at TEXT
+        );
+        INSERT INTO messages (owner_id, chat_id, message_id, from_name, text, sent_at)
+        VALUES (1, -1, 55, 'Кто-то', 'привет', '2026-07-01T00:00:00+00:00');
+    """)
+    con.commit()
+    con.close()
+
+    s = MonitorStore(path)
+    await s.init()
+
+    con = sqlite3.connect(path)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
+    assert {"forward_from_name", "forward_from_username"} <= cols
+    row = con.execute(
+        "SELECT from_name, text, forward_from_name, forward_from_username "
+        "FROM messages WHERE message_id=55").fetchone()
+    assert row == ("Кто-то", "привет", None, None)
+
+
 async def test_init_migrates_an_older_owners_table_and_defaults_notify_enabled_on(tmp_path):
     # A live owners row created before notify_enabled existed must gain the
     # column and default to "on" -- an existing connection must keep being
@@ -237,6 +276,23 @@ async def test_record_message_stores_the_username_when_given(store):
                                from_username="someone")
     m = await store.get_message(o.id, -1, 55)
     assert m.from_username == "someone"
+
+
+async def test_record_message_stores_the_forward_source_when_given(store):
+    o = await make_owner(store)
+    await store.record_message(o.id, -1, 55, 100, "Кто-то", "привет", None, None, NOW,
+                               forward_from_name="Иван Иванов", forward_from_username="ivan_i")
+    m = await store.get_message(o.id, -1, 55)
+    assert m.forward_from_name == "Иван Иванов"
+    assert m.forward_from_username == "ivan_i"
+
+
+async def test_record_message_without_forward_args_defaults_to_null(store):
+    o = await make_owner(store)
+    await store.record_message(o.id, -1, 55, 100, "Кто-то", "привет", None, None, NOW)
+    m = await store.get_message(o.id, -1, 55)
+    assert m.forward_from_name is None
+    assert m.forward_from_username is None
 
 
 async def test_record_is_idempotent_on_the_same_key(store):

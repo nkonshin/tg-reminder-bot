@@ -27,7 +27,8 @@ def a_connection(conn_id="conn-1", user_id=100, enabled=True):
 
 
 def a_message(conn_id="conn-1", chat_id=-1, message_id=5, text="привет",
-              user_id=300, name="Собеседник", username=None, is_bot=False, **media_fields):
+              user_id=300, name="Собеседник", username=None, is_bot=False,
+              forward_origin=None, **media_fields):
     fields = dict(photo=None, video=None, video_note=None, voice=None, document=None)
     fields.update(media_fields)
     return SimpleNamespace(business_connection_id=conn_id,
@@ -35,6 +36,7 @@ def a_message(conn_id="conn-1", chat_id=-1, message_id=5, text="привет",
                            message_id=message_id, text=text, caption=None,
                            from_user=SimpleNamespace(id=user_id, full_name=name,
                                                      username=username, is_bot=is_bot),
+                           forward_origin=forward_origin,
                            **fields)
 
 
@@ -203,6 +205,75 @@ async def test_from_username_is_journaled_and_appears_in_the_edit_notification(d
     await capture.on_edited_business_message(
         a_message(text="стало", username="dasha_biz"), deps, NOW)
     assert "@dasha_biz" in deps.bot.sent[0].text
+
+
+def test_forward_source_is_none_for_a_plain_message():
+    assert capture._forward_source(a_message()) == (None, None)
+
+
+def test_forward_source_from_a_user():
+    sender = SimpleNamespace(full_name="Иван Иванов", username="ivan_i")
+    origin = SimpleNamespace(sender_user=sender)
+    assert capture._forward_source(a_message(forward_origin=origin)) == ("Иван Иванов", "ivan_i")
+
+
+def test_forward_source_from_a_user_without_a_username():
+    sender = SimpleNamespace(full_name="Иван Иванов", username=None)
+    origin = SimpleNamespace(sender_user=sender)
+    assert capture._forward_source(a_message(forward_origin=origin)) == ("Иван Иванов", None)
+
+
+def test_forward_source_from_a_hidden_user():
+    origin = SimpleNamespace(sender_user_name="Скрытый Пользователь")
+    assert capture._forward_source(a_message(forward_origin=origin)) == \
+        ("Скрытый Пользователь", None)
+
+
+def test_forward_source_from_a_chat():
+    sender_chat = SimpleNamespace(title="Рабочий чат", username="work_chat")
+    origin = SimpleNamespace(sender_chat=sender_chat)
+    assert capture._forward_source(a_message(forward_origin=origin)) == \
+        ("Рабочий чат", "work_chat")
+
+
+def test_forward_source_from_a_channel():
+    chat = SimpleNamespace(title="Новостной канал", username="news_channel")
+    origin = SimpleNamespace(chat=chat)
+    assert capture._forward_source(a_message(forward_origin=origin)) == \
+        ("Новостной канал", "news_channel")
+
+
+async def test_a_forwarded_message_is_journaled_with_its_source(deps):
+    owner = await connect(deps)
+    sender = SimpleNamespace(full_name="Иван Иванов", username="ivan_i")
+    origin = SimpleNamespace(sender_user=sender)
+    await capture.on_business_message(
+        a_message(text="переслано", forward_origin=origin), deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.forward_from_name == "Иван Иванов"
+    assert stored.forward_from_username == "ivan_i"
+
+
+async def test_a_normal_message_has_no_forward_source(deps):
+    owner = await connect(deps)
+    await capture.on_business_message(a_message(text="привет"), deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.forward_from_name is None
+    assert stored.forward_from_username is None
+
+
+async def test_an_edited_pre_connection_forwarded_message_captures_its_source(deps):
+    # Same bootstrap path as test_edit_of_a_pre_connection_message_also_captures_its_media:
+    # a message predating the connection is seen for the first time via the edit
+    # handler, and that first-sight capture must thread the forward source too.
+    owner = await connect(deps)
+    sender = SimpleNamespace(full_name="Пётр Петров", username=None)
+    origin = SimpleNamespace(sender_user=sender)
+    msg = a_message(text="давнее", forward_origin=origin)
+    await capture.on_edited_business_message(msg, deps, NOW)
+    stored = await deps.store.get_message(owner.id, -1, 5)
+    assert stored.forward_from_name == "Пётр Петров"
+    assert stored.forward_from_username is None
 
 
 async def test_an_author_without_a_username_gets_no_stray_parentheses(deps):

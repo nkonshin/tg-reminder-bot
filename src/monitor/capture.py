@@ -92,6 +92,36 @@ def _is_owner_control_chat(owner, chat_id) -> bool:
     return chat_id == owner.owner_user_id
 
 
+def _forward_source(msg) -> "tuple[str | None, str | None]":
+    """(name, username) a message was forwarded from, or (None, None) when it
+    is not a forward at all. `msg.forward_origin` (aiogram 3.30, Bot API 7+)
+    is one of four shapes -- detected here by which attribute is present
+    (via getattr), never by comparing an origin.type string, since `type` can
+    be an enum. Fully duck-typed so this module never imports aiogram:
+      - user: origin.sender_user is a User -- full_name + username.
+      - hidden_user: origin.sender_user_name is a plain string -- name only,
+        the user hid their account.
+      - chat: origin.sender_chat is a Chat (a group) -- title + username.
+      - channel: origin.chat is a Chat (a channel) -- title + username.
+    """
+    origin = getattr(msg, "forward_origin", None)
+    if origin is None:
+        return None, None
+    sender_user = getattr(origin, "sender_user", None)
+    if sender_user is not None:
+        return getattr(sender_user, "full_name", None), getattr(sender_user, "username", None)
+    hidden_name = getattr(origin, "sender_user_name", None)
+    if hidden_name is not None:
+        return hidden_name, None
+    sender_chat = getattr(origin, "sender_chat", None)
+    if sender_chat is not None:
+        return getattr(sender_chat, "title", None), getattr(sender_chat, "username", None)
+    chat = getattr(origin, "chat", None)
+    if chat is not None:
+        return getattr(chat, "title", None), getattr(chat, "username", None)
+    return None, None
+
+
 async def _capture_new_message(deps: MonitorDeps, owner, msg, now: datetime, text) -> None:
     """Record a message this journal has not seen before. Metadata is written
     unconditionally -- so a later edit or deletion can still describe it (e.g.
@@ -102,11 +132,14 @@ async def _capture_new_message(deps: MonitorDeps, owner, msg, now: datetime, tex
     # of a pre-connection message reaches the journal here for the first time,
     # and dating it "now" would restart its retention clock and misfile it.
     sent_at = getattr(msg, "date", None) or now
+    forward_name, forward_username = _forward_source(msg)
     await deps.store.record_message(owner.id, msg.chat.id, msg.message_id,
                                     msg.from_user.id if msg.from_user else None,
                                     getattr(msg.from_user, "full_name", None),
                                     text, kind, None, sent_at,
-                                    from_username=getattr(msg.from_user, "username", None))
+                                    from_username=getattr(msg.from_user, "username", None),
+                                    forward_from_name=forward_name,
+                                    forward_from_username=forward_username)
     if kind and media.is_enabled_for(owner, kind):
         rel = await media.download(deps.bot, deps.cfg, owner.id, msg.chat.id,
                                    msg.message_id, kind, file_id)
