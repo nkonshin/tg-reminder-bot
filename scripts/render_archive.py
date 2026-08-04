@@ -157,7 +157,9 @@ def media_html(row, archive_dir):
         return (f'<video class="vid" autoplay muted loop playsinline '
                 f'src="{src}"></video>')
     if kind in ("voice", "audio"):
-        return f'<audio controls src="{src}"></audio>'
+        # Playback-speed button cycles 1×/1.5×/2× like Telegram (wired in JS).
+        return (f'<span class="voice"><audio controls src="{src}"></audio>'
+                f'<button type="button" class="spd">1×</button></span>')
     return f'<a class="chip" href="{src}" target="_blank">📎 {html.escape(label)}</a>'
 
 
@@ -249,7 +251,11 @@ padding:3px 12px;border-radius:10px;margin:10px 0;position:sticky;top:4px}
 .tag.ed{background:#3a4a5a;color:#cfe0f0}
 img.ph{max-width:260px;max-height:320px;border-radius:8px;display:block}
 video.vid{max-width:260px;border-radius:8px;display:block}
-audio{width:240px;margin:2px 0}
+audio{width:240px;margin:2px 0;vertical-align:middle}
+.voice{display:inline-flex;align-items:center;gap:6px}
+.spd{background:#0e1621;color:var(--ink);border:1px solid var(--line);border-radius:6px;
+padding:3px 7px;font-size:12px;cursor:pointer;flex:none}
+.spd:hover{background:#1c2b3a}
 .chip{display:inline-block;background:#20303f;color:var(--dim);padding:5px 9px;
 border-radius:8px;font-size:12px;text-decoration:none}
 """
@@ -281,6 +287,16 @@ pick.addEventListener('change',()=>{
 });
 items.forEach(i=>i.addEventListener('click',()=>show(i.dataset.key)));
 if(items.length)show(items[0].dataset.key);
+
+// Voice/audio playback-speed toggle: cycles 1x -> 1.5x -> 2x on its own player.
+const SPEEDS=[1,1.5,2];
+document.addEventListener('click',e=>{
+  const b=e.target.closest('.spd'); if(!b) return;
+  const audio=b.parentElement.querySelector('audio'); if(!audio) return;
+  const next=SPEEDS[(SPEEDS.indexOf(audio.playbackRate)+1)%SPEEDS.length];
+  audio.playbackRate=next;
+  b.textContent=(Number.isInteger(next)?next:next.toFixed(1))+'×';
+});
 """
 
 
