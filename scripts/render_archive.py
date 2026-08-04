@@ -21,12 +21,14 @@ publish the output.
 """
 import argparse
 import html
+import json
 import os
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
 
 MEDIA_SUBDIR = "media"
+STATE_FILE = ".render_state.json"
 KIND_LABEL = {"photo": "фото", "video": "видео", "video_note": "кружок",
               "voice": "голосовое", "document": "документ", "animation": "гифка",
               "sticker": "стикер", "location": "геолокация", "contact": "контакт",
@@ -48,6 +50,9 @@ def parse_args():
     p.add_argument("--tz-offset", type=int, default=0,
                    help="hours to add to stored UTC times for display (e.g. 5)")
     p.add_argument("--out", default=None, help="output HTML path")
+    p.add_argument("--reset-new", action="store_true",
+                   help="forget the previous render's mark: this render shows no "
+                        "'new messages' separator, and the next one measures from here")
     return p.parse_args()
 
 
@@ -207,11 +212,33 @@ def message_html(row, my_id, archive_dir, offset):
     return f'<div class="{" ".join(classes)}" data-date="{dd}">{"".join(parts)}{meta}</div>'
 
 
-def feed_body(chat_rows, my_id, archive_dir, offset):
-    """Messages interleaved with a date separator whenever the day changes.
-    The separators are also the jump targets for the date picker."""
-    out, prev_day = [], None
+def read_watermark(archive_dir):
+    """Max sent_at recorded at the previous render — the 'new since last time'
+    boundary. None on the first ever render (no separator, nothing is 'new')."""
+    try:
+        with open(os.path.join(archive_dir, STATE_FILE), encoding="utf-8") as fh:
+            return json.load(fh).get("last_watermark")
+    except (OSError, ValueError):
+        return None
+
+
+def write_watermark(archive_dir, value):
+    if not value:
+        return
+    with open(os.path.join(archive_dir, STATE_FILE), "w", encoding="utf-8") as fh:
+        json.dump({"last_watermark": value}, fh)
+
+
+def feed_body(chat_rows, my_id, archive_dir, offset, watermark):
+    """Messages interleaved with a date separator whenever the day changes (the
+    date-jump targets), plus a one-time 'new messages' separator before the
+    first message newer than `watermark` (the previous render's high-water
+    mark). sent_at is a UTC ISO string, so a plain string compare orders it."""
+    out, prev_day, new_shown = [], None, False
     for r in chat_rows:
+        if watermark and not new_shown and r["sent_at"] > watermark:
+            out.append('<div class="newsep">Новые сообщения</div>')
+            new_shown = True
         dk = day_key(r["sent_at"], offset)
         if dk != prev_day:
             out.append(f'<div class="daysep" data-date="{dk}">'
@@ -243,12 +270,18 @@ display:flex;justify-content:space-between;gap:8px}
 #head{padding:11px 20px;background:var(--panel);border-bottom:1px solid var(--line);
 font-weight:600;font-size:16px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 #head small{color:var(--dim);font-weight:400;font-size:13px;margin-left:8px}
+.headtools{display:flex;align-items:center;gap:10px;flex:none}
 #datepick{background:#0e1621;color:var(--ink);border:1px solid var(--line);
 border-radius:8px;padding:5px 8px;font-size:13px;color-scheme:dark;flex:none}
+#newbtn{background:var(--mine);color:#fff;border:none;border-radius:8px;padding:6px 12px;
+font-size:13px;cursor:pointer;display:none}
+#newbtn:hover{background:#356ba0}
 #feed{flex:1;overflow-y:auto;padding:20px 16px;display:flex;flex-direction:column}
 .feed{display:none;flex-direction:column;gap:3px}
 .daysep{align-self:center;background:#0e1621;color:var(--dim);font-size:12px;
 padding:3px 12px;border-radius:10px;margin:10px 0;position:sticky;top:4px}
+.newsep{align-self:stretch;text-align:center;color:#8ecdf0;font-size:12px;font-weight:600;
+margin:12px 0 6px;border-top:1px solid #3a5a78;padding-top:6px}
 .msg{max-width:64%;padding:6px 11px;border-radius:14px;word-wrap:break-word;margin-bottom:1px}
 .msg.theirs{background:var(--theirs);align-self:flex-start;border-bottom-left-radius:4px}
 .msg.mine{background:var(--mine);align-self:flex-end;border-bottom-right-radius:4px}
@@ -282,6 +315,7 @@ const feeds=[...document.querySelectorAll('.feed')];
 const title=document.getElementById('title');
 const feed=document.getElementById('feed');
 const pick=document.getElementById('datepick');
+const newbtn=document.getElementById('newbtn');
 let activeFeed=null;
 function show(key){
   const it=items.find(i=>i.dataset.key===key);
@@ -292,8 +326,14 @@ function show(key){
   // bound the date picker to this conversation's own range
   const dates=[...activeFeed.querySelectorAll('[data-date]')].map(e=>e.dataset.date).filter(Boolean).sort();
   pick.min=dates[0]||''; pick.max=dates[dates.length-1]||''; pick.value='';
+  // the "new messages" button only appears when this chat has any
+  newbtn.style.display=activeFeed.querySelector('.newsep')?'inline-block':'none';
   feed.scrollTop=0;
 }
+newbtn.addEventListener('click',()=>{
+  const sep=activeFeed&&activeFeed.querySelector('.newsep');
+  if(sep) sep.scrollIntoView({block:'start'});
+});
 pick.addEventListener('change',()=>{
   if(!activeFeed||!pick.value) return;
   const anchors=[...activeFeed.querySelectorAll('[data-date]')];
@@ -316,7 +356,7 @@ document.addEventListener('click',e=>{
 """
 
 
-def render(rows, owners, archive_dir, offset):
+def render(rows, owners, archive_dir, offset, watermark):
     by_owner = defaultdict(list)
     for r in rows:
         by_owner[r["owner_id"]].append(r)
@@ -344,13 +384,14 @@ def render(rows, owners, archive_dir, offset):
                 f'data-acct="{html.escape(acct_name)}" data-count="{len(crs)}">'
                 f'<span class="nm">{title}</span><span class="ct">{len(crs)}</span></div>')
             feeds.append(f'<div class="feed" data-key="{key}">'
-                         f'{feed_body(crs, my_id, archive_dir, offset)}</div>')
+                         f'{feed_body(crs, my_id, archive_dir, offset, watermark)}</div>')
 
     return f"""<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <title>Архив переписки</title><style>{PAGE_CSS}</style></head><body>
 <div id="chats">{"".join(sidebar)}</div>
 <div id="main"><div id="head"><span id="title"></span>
-<input type="date" id="datepick" title="перейти к дате"></div>
+<span class="headtools"><button type="button" id="newbtn" title="к первому новому сообщению">↓ Новые</button>
+<input type="date" id="datepick" title="перейти к дате"></span></div>
 <div id="feed">{"".join(feeds)}</div></div>
 <script>{PAGE_JS}</script></body></html>"""
 
@@ -370,12 +411,20 @@ def main():
     if not rows:
         raise SystemExit("the database has no messages")
 
+    # Everything newer than the previous render's high-water mark is "new".
+    watermark = None if args.reset_new else read_watermark(archive_dir)
+    newest = max(r["sent_at"] for r in rows)
+
     out = args.out or os.path.join(archive_dir, "index.html")
     with open(out, "w", encoding="utf-8") as fh:
-        fh.write(render(rows, owners, archive_dir, args.tz_offset))
+        fh.write(render(rows, owners, archive_dir, args.tz_offset, watermark))
 
+    # Advance the mark so the next render measures "new" from this point.
+    write_watermark(archive_dir, newest)
+
+    new_count = sum(1 for r in rows if watermark and r["sent_at"] > watermark)
     print(f"accounts: {len(owners) or 'unknown'}")
-    print(f"messages: {len(rows)}")
+    print(f"messages: {len(rows)} ({new_count} new since last render)")
     print(f"wrote: {out}")
 
 
