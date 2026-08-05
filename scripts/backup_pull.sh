@@ -77,17 +77,48 @@ case "$probe" in
 esac
 
 echo "==> merging into $MASTER"
+
+# First run only: create the tables with the snapshot's exact schema. On every
+# later run they already exist, possibly with fewer columns than the snapshot
+# (see sync_schema below), so these are no-ops.
 sqlite3 "$MASTER" <<SQL
 ATTACH DATABASE '$SNAPSHOT_DIR/snapshot.sqlite3' AS src;
-
-CREATE TABLE IF NOT EXISTS owners AS SELECT * FROM src.owners WHERE 0;
+CREATE TABLE IF NOT EXISTS owners   AS SELECT * FROM src.owners   WHERE 0;
 CREATE TABLE IF NOT EXISTS messages AS SELECT * FROM src.messages WHERE 0;
 CREATE UNIQUE INDEX IF NOT EXISTS ix_messages_key
   ON messages(owner_id, chat_id, message_id);
 CREATE UNIQUE INDEX IF NOT EXISTS ix_owners_conn
   ON owners(business_connection_id);
+DETACH DATABASE src;
+SQL
 
-INSERT OR IGNORE INTO owners SELECT * FROM src.owners;
+# The master is a long-lived accumulation; the snapshot's schema moves ahead of
+# it whenever a new column ships on the server. The bot only ever *appends*
+# columns (its _migrate does ALTER ... ADD, never a reorder), so the master's
+# columns stay a prefix of the snapshot's -- adding the missing tail back, in
+# the snapshot's own order, realigns the two. Do this before copying rows:
+# otherwise "INSERT ... SELECT *" pushes more values than the older table has
+# slots for, the whole merge aborts, and the archive silently stops updating.
+sync_schema() {
+  local table="$1" have name type
+  have=" $(sqlite3 "$MASTER" \
+            "SELECT COALESCE(group_concat(name,' '),'') FROM pragma_table_info('$table');") "
+  while IFS='|' read -r name type; do
+    if [[ -z "$name" || "$have" == *" $name "* ]]; then
+      continue
+    fi
+    echo "==> $table: adding column $name $type (new on the server since last backup)"
+    sqlite3 "$MASTER" "ALTER TABLE \"$table\" ADD COLUMN \"$name\" $type;"
+  done < <(sqlite3 -separator '|' "$SNAPSHOT_DIR/snapshot.sqlite3" \
+             "SELECT name, type FROM pragma_table_info('$table');")
+}
+sync_schema owners
+sync_schema messages
+
+sqlite3 "$MASTER" <<SQL
+ATTACH DATABASE '$SNAPSHOT_DIR/snapshot.sqlite3' AS src;
+
+INSERT OR IGNORE INTO owners   SELECT * FROM src.owners;
 INSERT OR IGNORE INTO messages SELECT * FROM src.messages;
 
 -- A message already archived keeps its first-seen text forever (that is the
