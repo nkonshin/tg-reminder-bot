@@ -264,3 +264,37 @@ def test_next_weekday_qualifier_feminine_cleans_title():
     p = parse_when("в следующую пятницу заплатить за интернет", NOW, CFG)  # NOW — пятница
     assert p.day == NOW.date() + timedelta(days=7)  # сегодня тоже пятница — строго вперед
     assert p.title == "заплатить за интернет"
+
+
+# --- Дашин фидбэк: «понедельник 12:20» без «в» перед временем не срабатывал ---
+
+
+def test_colon_time_without_preposition_is_a_time():
+    # «12:20» с двоеточием — однозначно время, предлог не нужен. Раньше правило
+    # «голое число — не время» отбрасывало его наравне с «купить 5 яблок».
+    t, spans = extract_time("ирина швея понедельник 12:20")
+    assert t == time(12, 20) and len(spans) == 1
+
+
+def test_dotted_time_without_preposition_stays_a_date():
+    # Точка — запись даты («12.08» = 12 августа), а не время; без предлога
+    # временем она по-прежнему не считается, иначе сломались бы даты.
+    t, spans = extract_time("12.08 позвонить")
+    assert t is None and spans == []
+
+
+def test_weekday_and_colon_time_without_any_preposition():
+    # Ровно фраза Даши: без «в» ни перед днём недели, ни перед временем.
+    # Должна разбираться так же, как сработавшее «10 августа в 12:20».
+    p = parse_when("напомни ирина швея понедельник 12:20", NOW, CFG)  # NOW — пятница
+    assert p.at == time(12, 20)
+    assert p.day == date(2026, 7, 27)  # ближайший понедельник впереди
+    assert resolve(p, NOW) == datetime(2026, 7, 27, 12, 20, tzinfo=TZ)
+    assert "ирина швея" in p.title and "12:20" not in p.title
+
+
+def test_explicit_date_and_colon_time_without_preposition():
+    # «10 августа 12:20» — явная дата плюс двоеточное время, оба без предлога.
+    p = parse_when("напомни ирина швея 10 августа 12:20", NOW, CFG)
+    assert p.at == time(12, 20) and p.day == date(2026, 8, 10)
+    assert resolve(p, NOW) == datetime(2026, 8, 10, 12, 20, tzinfo=TZ)

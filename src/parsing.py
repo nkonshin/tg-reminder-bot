@@ -8,7 +8,7 @@ from dateparser.search import search_dates
 Span = tuple[int, int]
 
 TIME_RE = re.compile(
-    r"\b(?:(?P<prep>в|к|на)\s+)?(?P<hour>\d{1,2})(?:[:.](?P<minute>\d{2}))?"
+    r"\b(?:(?P<prep>в|к|на)\s+)?(?P<hour>\d{1,2})(?:(?P<sep>[:.])(?P<minute>\d{2}))?"
     r"(?:\s*час(?:а|ов|ик(?:а|ов)?)?)?"
     r"(?:\s+(?P<qual>утра|дня|вечера|ночи))?\b"
 )
@@ -56,9 +56,13 @@ def extract_time(text: str) -> tuple[time | None, list[Span]]:
         prep = m.group("prep")
         if hour > 23 or minute > 59:
             continue
-        if prep is None and qual is None:
+        if prep is None and qual is None and m.group("sep") != ":":
             # Голое число без предлога и без «утра/вечера» — не время
             # («купить 5 яблок»), иначе временем станет любая цифра.
+            # Исключение — явные минуты через двоеточие («12:20»): даты так
+            # не записывают, так что это однозначно время и предлог ему не
+            # нужен. Точку («12.08») сюда не берём — это запись даты, её
+            # разбирает _extract_date ниже.
             continue
         if prep == "на" and qual == "дня":
             continue  # «уехать на 3 дня» — это срок, а не 15:00
