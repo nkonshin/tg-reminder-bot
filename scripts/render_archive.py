@@ -425,7 +425,11 @@ def render(rows, owners, archive_dir, offset, watermark):
         by_chat = defaultdict(list)
         for r in orows:
             by_chat[r["chat_id"]].append(r)
-        chats = sorted(by_chat.items(), key=lambda kv: len(kv[1]), reverse=True)
+        # Most-recently-active chat on top, like a messenger's chat list.
+        # sent_at is a UTC ISO string, so max() by plain string compare gives
+        # the last message's time.
+        chats = sorted(by_chat.items(),
+                       key=lambda kv: max(r["sent_at"] for r in kv[1]), reverse=True)
 
         sidebar.append(f'<div class="acct">аккаунт: <b>{html.escape(acct_name)}</b></div>')
         for chat_id, crs in chats:
