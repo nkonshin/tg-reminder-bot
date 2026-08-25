@@ -313,8 +313,10 @@ padding:16px 16px 6px;border-bottom:1px solid var(--line)}
 display:flex;justify-content:space-between;gap:8px}
 .chat-item:hover{background:#1c2b3a}
 .chat-item.active{background:var(--mine)}
-.chat-item .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-item .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
 .chat-item .ct{color:var(--dim);font-size:12px;flex:none}
+.newdot{width:8px;height:8px;border-radius:50%;background:#f5a623;flex:none;
+align-self:center;box-shadow:0 0 0 2px rgba(245,166,35,.25)}
 .chat-item.active .ct{color:#cfe0f0}
 #main{flex:1;display:flex;flex-direction:column;min-width:0}
 #head{padding:11px 20px;background:var(--panel);border-bottom:1px solid var(--line);
@@ -429,10 +431,14 @@ def render(rows, owners, archive_dir, offset, watermark):
         for chat_id, crs in chats:
             key = f"o{owner_id}c{chat_id}"
             title = html.escape(chat_title(crs, my_id))
+            # Unread dot: any message in this chat newer than the previous
+            # render's mark — same boundary as the "new messages" separator.
+            has_new = bool(watermark) and any(r["sent_at"] > watermark for r in crs)
+            dot = '<span class="newdot" title="новые сообщения"></span>' if has_new else ''
             sidebar.append(
                 f'<div class="chat-item" data-key="{key}" data-name="{title}" '
                 f'data-acct="{html.escape(acct_name)}" data-count="{len(crs)}">'
-                f'<span class="nm">{title}</span><span class="ct">{len(crs)}</span></div>')
+                f'<span class="nm">{title}</span>{dot}<span class="ct">{len(crs)}</span></div>')
             feeds.append(f'<div class="feed" data-key="{key}">'
                          f'{feed_body(crs, my_id, archive_dir, offset, watermark)}</div>')
 
