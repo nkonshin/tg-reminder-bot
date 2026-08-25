@@ -42,6 +42,14 @@ NO_FILE_CHIP_ICON = {"sticker": "🎨", "location": "📍", "contact": "👤", "
 NAME_COLORS = ["#e17076", "#7bc862", "#e5ca77", "#65aadd", "#a695e7",
                "#ee7aae", "#6ec9cb", "#faa774"]
 
+# View filters (see apply_view_filters). These only shrink what the HTML shows;
+# storage/backups keep everything. The archive had grown past ~18k messages and
+# the single page began to choke the browser, so the two heavy accounts are
+# trimmed to what's actually worth eyeballing.
+NIKITA_USER_ID = 208210577   # his own account — he barely reviews it
+DASHA_USER_ID = 751057661    # her account
+NIKITA_TAIL = 30             # keep only the last N messages of each of his chats
+
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
@@ -53,6 +61,9 @@ def parse_args():
     p.add_argument("--reset-new", action="store_true",
                    help="forget the previous render's mark: this render shows no "
                         "'new messages' separator, and the next one measures from here")
+    p.add_argument("--full", action="store_true",
+                   help="disable the view filters (apply_view_filters) and render "
+                        "every stored message — a one-off escape hatch")
     return p.parse_args()
 
 
@@ -92,6 +103,45 @@ def owner_user_id_for(owner_id, owners, chat_rows):
         if r["from_user_id"] is not None:
             per_user[r["from_user_id"]].add(r["chat_id"])
     return max(per_user, key=lambda u: len(per_user[u])) if per_user else None
+
+
+def apply_view_filters(rows, owners):
+    """Trim what goes into the HTML — the growing archive made the page too
+    heavy to open. Storage is untouched; this only affects the rendered view.
+
+      * The shared Nikita<->Dasha dialog (either side of the connection): keep
+        only messages that were deleted. Their live conversation he reads in
+        Telegram itself; the archive is there to surface what got removed.
+      * Nikita's other chats: keep only the last NIKITA_TAIL messages of each —
+        he skims his own account, huge histories aren't worth loading.
+      * Everything else (Dasha's other chats): kept in full.
+
+    Unknown owners, or an archive that isn't this two-account setup, fall
+    through to "kept in full", so the viewer stays generic.
+    """
+    by_owner = defaultdict(list)
+    for r in rows:
+        by_owner[r["owner_id"]].append(r)
+    owner_uid = {oid: owner_user_id_for(oid, owners, orows)
+                 for oid, orows in by_owner.items()}
+
+    by_oc = defaultdict(list)
+    for r in rows:
+        by_oc[(r["owner_id"], r["chat_id"])].append(r)
+
+    kept = []
+    for (owner_id, chat_id), crs in by_oc.items():
+        uid = owner_uid.get(owner_id)
+        is_shared = {uid, chat_id} == {NIKITA_USER_ID, DASHA_USER_ID}
+        if is_shared:
+            kept += [r for r in crs if r["deleted_at"]]
+        elif uid == NIKITA_USER_ID:
+            kept += crs[-NIKITA_TAIL:]  # crs already in chronological order
+        else:
+            kept += crs
+    # render() and the watermark expect the same global order load() produced
+    kept.sort(key=lambda r: (r["owner_id"], r["chat_id"], r["sent_at"], r["message_id"]))
+    return kept
 
 
 def chat_title(chat_rows, my_id):
@@ -411,20 +461,24 @@ def main():
     if not rows:
         raise SystemExit("the database has no messages")
 
-    # Everything newer than the previous render's high-water mark is "new".
+    # The high-water mark tracks the whole archive, not the filtered view, so it
+    # keeps advancing correctly regardless of what the view happens to show.
     watermark = None if args.reset_new else read_watermark(archive_dir)
     newest = max(r["sent_at"] for r in rows)
 
+    view_rows = rows if args.full else apply_view_filters(rows, owners)
+
     out = args.out or os.path.join(archive_dir, "index.html")
     with open(out, "w", encoding="utf-8") as fh:
-        fh.write(render(rows, owners, archive_dir, args.tz_offset, watermark))
+        fh.write(render(view_rows, owners, archive_dir, args.tz_offset, watermark))
 
     # Advance the mark so the next render measures "new" from this point.
     write_watermark(archive_dir, newest)
 
-    new_count = sum(1 for r in rows if watermark and r["sent_at"] > watermark)
+    new_count = sum(1 for r in view_rows if watermark and r["sent_at"] > watermark)
     print(f"accounts: {len(owners) or 'unknown'}")
-    print(f"messages: {len(rows)} ({new_count} new since last render)")
+    print(f"messages shown: {len(view_rows)} of {len(rows)} "
+          f"({new_count} new since last render)")
     print(f"wrote: {out}")
 
 
