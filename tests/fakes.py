@@ -30,6 +30,11 @@ class FakeBot:
         # sent via send_document() (used to re-share a deleted file).
         self.downloads = []
         self.fail_download = False
+        # file_id -> server-side file_path, consulted by get_file(). Lets a test
+        # drive the extension media.download() derives for a variable-format
+        # kind (a sticker's .webp/.tgs/.webm). fail_get_file raises instead.
+        self.file_paths = {}
+        self.fail_get_file = False
         self.documents = []
         # When set alongside fail_download, simulates a transfer that streamed
         # some bytes to disk before the failure (real network cutoff/timeout
@@ -47,7 +52,17 @@ class FakeBot:
                                          parse_mode=parse_mode))
         return SimpleNamespace(message_id=len(self.sent))
 
-    async def download(self, file_id, destination):
+    async def get_file(self, file_id):
+        if self.fail_get_file:
+            raise RuntimeError("get_file failed")
+        return SimpleNamespace(file_id=file_id,
+                               file_path=self.file_paths.get(file_id, f"files/{file_id}"))
+
+    async def download(self, target, destination):
+        # target is a file_id (str) for fixed-extension kinds, or the File
+        # object returned by get_file for variable ones — mirror aiogram, which
+        # accepts either. Record the file_id in both cases.
+        file_id = getattr(target, "file_id", target)
         if self.fail_download:
             if self.partial_write_then_fail:
                 with open(destination, "wb") as fh:

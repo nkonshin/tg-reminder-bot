@@ -30,6 +30,7 @@ OWNER_COLUMNS = [
     ("log_document", "INTEGER NOT NULL DEFAULT 0"),
     ("log_animation", "INTEGER NOT NULL DEFAULT 0"),
     ("log_audio", "INTEGER NOT NULL DEFAULT 0"),
+    ("log_sticker", "INTEGER NOT NULL DEFAULT 0"),
     ("connected_at", "TEXT NOT NULL"),
 ]
 
@@ -70,6 +71,7 @@ class Owner:
     log_document: int
     log_animation: int
     log_audio: int
+    log_sticker: int
     connected_at: str
 
 
@@ -106,7 +108,7 @@ MESSAGE_COLS = ", ".join(f.name for f in fields(StoredMessage))
 # crafted callback from overwriting an arbitrary column.
 TOGGLEABLE = ("monitor_enabled", "mirror_to_admin", "notify_enabled",
               "log_photo", "log_video", "log_video_note", "log_voice", "log_document",
-              "log_animation", "log_audio")
+              "log_animation", "log_audio", "log_sticker")
 
 
 def _create_sql(table: str, columns) -> str:

@@ -23,6 +23,7 @@ def an_owner(**over):
                 notify_enabled=1,
                 retention_days=None, log_photo=0, log_video=0, log_video_note=0,
                 log_voice=0, log_document=0, log_animation=0, log_audio=0,
+                log_sticker=0,
                 connected_at="2026-07-30T13:00:00+00:00")
     base.update(over)
     return Owner(**base)

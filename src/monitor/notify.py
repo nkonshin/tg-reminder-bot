@@ -288,7 +288,7 @@ def kb_admin_media(owner, back: str = "adm:main") -> InlineKeyboardMarkup:
         [_toggle(owner, "log_video_note", "Кружки"),
          _toggle(owner, "log_voice", "Голосовые")],
         [_toggle(owner, "log_document", "Документы"), _toggle(owner, "log_animation", "Гифки")],
-        [_toggle(owner, "log_audio", "Музыка")],
+        [_toggle(owner, "log_audio", "Музыка"), _toggle(owner, "log_sticker", "Стикеры")],
         [("Назад", back)],
     ])
 

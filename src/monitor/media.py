@@ -6,9 +6,10 @@ log = logging.getLogger(__name__)
 
 # Extension per kind: Telegram re-encodes photos to JPEG, voice to OGG,
 # video notes/animations to MP4 and audio to MP3, so a fixed extension is
-# accurate enough for an archive. sticker/venue/location/contact/poll/dice/
-# story/game have no entry -- they are never downloaded (see detect_kind and
-# is_enabled_for below), so download() never looks one up for them.
+# accurate enough for an archive. A kind with no entry has a format that
+# varies per message (a sticker is .webp, .tgs or .webm) -- download() resolves
+# its real extension from Telegram instead of guessing. venue/location/contact/
+# poll/dice/story/game are never downloaded at all (see detect_kind).
 EXTENSIONS = {"photo": "jpg", "video": "mp4", "video_note": "mp4",
               "voice": "ogg", "document": "bin", "animation": "mp4", "audio": "mp3"}
 
@@ -66,12 +67,25 @@ async def download(bot, cfg, owner_id, chat_id, message_id, kind, file_id) -> st
     mid-stream, a network cutoff) never leaves a truncated file at `dest` —
     dir_size() and anything that treats "file exists at the recorded path" as
     "download succeeded" would otherwise be fooled by the wreckage."""
-    rel = f"{owner_id}/{chat_id}/{message_id}.{EXTENSIONS.get(kind, 'bin')}"
+    ext = EXTENSIONS.get(kind)
+    target = file_id
+    if ext is None:
+        # Variable-format kind (a sticker can be .webp, .tgs or .webm): ask
+        # Telegram for the real file_path and take its extension, so the archive
+        # stores a file the viewer can actually open rather than a guessed one.
+        # Reuse the resolved File as the download target so get_file isn't
+        # called twice. A get_file failure falls back to a neutral extension.
+        try:
+            target = await bot.get_file(file_id)
+            ext = os.path.splitext(target.file_path or "")[1].lstrip(".").lower() or "bin"
+        except Exception:
+            ext, target = "bin", file_id
+    rel = f"{owner_id}/{chat_id}/{message_id}.{ext}"
     dest = _abs_path(cfg, rel)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     tmp = dest + ".part"
     try:
-        await asyncio.wait_for(bot.download(file_id, destination=tmp),
+        await asyncio.wait_for(bot.download(target, destination=tmp),
                                timeout=cfg.monitor_media_timeout_seconds)
         os.replace(tmp, dest)
         return rel

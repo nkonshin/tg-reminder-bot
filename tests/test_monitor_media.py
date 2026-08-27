@@ -172,3 +172,39 @@ async def test_download_leaves_no_partial_file_when_the_transfer_fails(tmp_path)
     assert rel is None
     assert not (tmp_path / "media" / "1" / "-1" / "55.jpg").exists()
     assert not (tmp_path / "media" / "1" / "-1" / "55.jpg.part").exists()
+
+
+# --- stickers: extension resolved from Telegram, not guessed ---
+
+async def test_download_resolves_a_webp_sticker_extension(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    bot.file_paths["stk-1"] = "stickers/pack_abc.webp"
+    rel = await media.download(bot, cfg, 1, -1, 55, "sticker", "stk-1")
+    assert rel == "1/-1/55.webp"
+    assert (tmp_path / "media" / rel).exists()
+
+
+async def test_download_resolves_a_tgs_sticker_extension(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    bot.file_paths["stk-2"] = "stickers/pack_abc.tgs"
+    rel = await media.download(bot, cfg, 1, -1, 55, "sticker", "stk-2")
+    assert rel == "1/-1/55.tgs"
+
+
+async def test_download_resolves_a_webm_video_sticker_extension(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    bot.file_paths["stk-3"] = "stickers/pack_abc.webm"
+    rel = await media.download(bot, cfg, 1, -1, 55, "sticker", "stk-3")
+    assert rel == "1/-1/55.webm"
+
+
+async def test_download_sticker_falls_back_to_bin_when_get_file_fails(tmp_path):
+    cfg = cfg_for(tmp_path)
+    bot = FakeBot()
+    bot.fail_get_file = True
+    rel = await media.download(bot, cfg, 1, -1, 55, "sticker", "stk-x")
+    assert rel == "1/-1/55.bin"
+    assert (tmp_path / "media" / rel).exists()

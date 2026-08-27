@@ -36,7 +36,8 @@ KIND_LABEL = {"photo": "фото", "video": "видео", "video_note": "кру�
               "story": "история", "venue": "место", "game": "игра"}
 # Kinds that never have a downloadable file (no log_* toggle exists for them):
 # always a labelled chip, regardless of media_path, never a broken embed.
-NO_FILE_CHIP_ICON = {"sticker": "🎨", "location": "📍", "contact": "👤", "poll": "📊",
+# (sticker is NOT here: it downloads now and renders as an image/video below.)
+NO_FILE_CHIP_ICON = {"location": "📍", "contact": "👤", "poll": "📊",
                      "venue": "📍", "dice": "🎲", "story": "📖", "game": "🎮"}
 # stable, readable colours for sender names, picked by hashing the user id
 NAME_COLORS = ["#e17076", "#7bc862", "#e5ca77", "#65aadd", "#a695e7",
@@ -205,10 +206,23 @@ def media_html(row, archive_dir):
         return f'<div class="chip">{NO_FILE_CHIP_ICON[kind]} {html.escape(label)}</div>'
     rel = row["media_path"]
     if not rel or not os.path.exists(os.path.join(archive_dir, MEDIA_SUBDIR, rel)):
+        if kind == "sticker":
+            # Old rows predate sticker downloading (media_path is NULL); still
+            # label it rather than showing a broken embed.
+            return f'<div class="chip">🎨 {html.escape(label)}</div>'
         if kind == "animation":
             return f'<div class="chip">🎞 {html.escape(label)} (не сохранена)</div>'
         return f'<div class="chip">🖇 {html.escape(label)} (файл не сохранён)</div>'
     src = html.escape(f"{MEDIA_SUBDIR}/{rel}")
+    if kind == "sticker":
+        ext = os.path.splitext(rel)[1].lower()
+        if ext == ".webp":
+            return f'<img class="stk" src="{src}">'
+        if ext == ".webm":
+            return (f'<video class="stk" autoplay muted loop playsinline '
+                    f'src="{src}"></video>')
+        # .tgs is gzipped Lottie JSON — a plain browser can't play it inline.
+        return f'<div class="chip">🎨 {html.escape(label)} (анимированный)</div>'
     if kind == "photo":
         return f'<a href="{src}" target="_blank"><img class="ph" src="{src}"></a>'
     if kind in ("video", "video_note"):
@@ -352,6 +366,7 @@ margin-bottom:4px}
 .tag.ed{background:#3a4a5a;color:#cfe0f0}
 img.ph{max-width:260px;max-height:320px;border-radius:8px;display:block}
 video.vid{max-width:260px;border-radius:8px;display:block}
+img.stk,video.stk{max-width:160px;max-height:160px;display:block}
 audio{width:240px;margin:2px 0;vertical-align:middle}
 .voice{display:inline-flex;align-items:center;gap:6px}
 .spd{background:#0e1621;color:var(--ink);border:1px solid var(--line);border-radius:6px;
