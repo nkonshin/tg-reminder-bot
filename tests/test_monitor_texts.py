@@ -87,20 +87,6 @@ def test_kind_label_covers_the_second_batch_of_new_kinds():
     assert notify.kind_label("game") == "игра"
 
 
-def test_deleted_unknown_says_content_was_not_stored():
-    t = notify.deleted_unknown_text("Кто-то", WHEN)
-    assert "не сохранено" in t
-
-
-def test_deleted_unknown_text_escapes_the_name():
-    # This string also goes out through notify_owner's parse_mode="HTML"
-    # send, so an unescaped name here would break it exactly like an
-    # unescaped message body would.
-    t = notify.deleted_unknown_text("<x>", WHEN)
-    assert "&lt;x&gt;" in t
-    assert "<x>" not in t
-
-
 def test_mirrored_prefix_escapes_the_owner_name():
     t = notify.mirrored_prefix("A & B")
     assert "A &amp; B" in t

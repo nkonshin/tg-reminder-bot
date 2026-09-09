@@ -180,14 +180,6 @@ def as_document(path: str) -> FSInputFile:
     return FSInputFile(path)
 
 
-def deleted_unknown_text(name: str | None, when_local: datetime) -> str:
-    # Escaped like every other author line here: this also goes out through
-    # notify_owner's parse_mode="HTML" send.
-    who = html.escape(name or "Собеседник")
-    return (f"🗑 {who} удалил(а) сообщение в {_hm(when_local)} — содержимое "
-            "не сохранено (отправлено до подключения бота)")
-
-
 def mirrored_prefix(owner_name: str | None) -> str:
     # owner_name is the owner's own Telegram display name -- still user-
     # controlled text, and this prefix rides along on the same HTML-mode send.

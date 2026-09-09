@@ -280,9 +280,17 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
     reportable = []
     for message_id in message_ids:
         stored = known.get(message_id)
-        author_id = stored.from_user_id if stored else None
-        if not _authored_by_owner(owner, author_id):
-            reportable.append(stored)
+        # A message that isn't in the journal (sent before the bot connected,
+        # so its content was never captured) is skipped entirely: there is
+        # nothing to show, and a delete event carries no author, so it can't
+        # even be attributed. Reporting these produced a flood of useless
+        # "content not saved" pings and -- worse -- labelled the owner's own
+        # cleanup of their old history as "the interlocutor deleted a message".
+        # Only a journaled message the interlocutor (not the owner) wrote is
+        # worth a notification.
+        if stored is None or _authored_by_owner(owner, stored.from_user_id):
+            continue
+        reportable.append(stored)
     if len(reportable) >= notify.BULK_THRESHOLD:
         # "Clear history" arrives as one event with every id in it. One send
         # per id makes Telegram 429 most of the burst, and since nothing
@@ -290,9 +298,6 @@ async def on_deleted_business_messages(event, deps: MonitorDeps, now: datetime) 
         await _notify_if_enabled(deps, owner, notify.deleted_bulk_text(reportable, when))
     else:
         for stored in reportable:
-            if stored is None:
-                await _notify_if_enabled(deps, owner, notify.deleted_unknown_text(None, when))
-                continue
             await _notify_if_enabled(deps, owner,
                                      notify.deleted_text(stored.from_name, stored.from_username,
                                                          stored, when),

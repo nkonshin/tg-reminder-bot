@@ -369,12 +369,16 @@ async def test_delete_notifies_with_the_stored_text(deps):
     assert (await deps.store.get_message(owner.id, -1, 5)).deleted_at is not None
 
 
-async def test_delete_of_an_unknown_message_says_so(deps):
+async def test_delete_of_an_unknown_message_is_not_reported(deps):
+    # A message that predates the connection isn't in the journal, so there is
+    # nothing to show and the delete event names no author. Reporting it spammed
+    # the owner with "content not saved" and, when the owner cleaned up their own
+    # old history, wrongly blamed the interlocutor. Such deletions stay silent.
     await connect(deps)
     event = SimpleNamespace(business_connection_id="conn-1",
                             chat=SimpleNamespace(id=-1), message_ids=[999])
     await capture.on_deleted_business_messages(event, deps, NOW)
-    assert "не сохранено" in deps.bot.sent[0].text
+    assert deps.bot.sent == []
 
 
 async def test_mirror_to_admin_duplicates_the_event(deps):
