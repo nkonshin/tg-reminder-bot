@@ -114,7 +114,10 @@ def test_webm_sticker_renders_as_a_looping_muted_video(tmp_path):
     _touch_media(str(tmp_path), "1/2/3.webm")
     out = media_html(a_row(media_kind="sticker", media_path="1/2/3.webm"), str(tmp_path))
     assert '<video class="stk"' in out
-    assert "autoplay" in out and "loop" in out and "muted" in out
+    # data-auto (not the autoplay attribute) so the viewer's IntersectionObserver
+    # plays it only while visible; still muted/looping, and preload="none".
+    assert "data-auto" in out and "loop" in out and "muted" in out
+    assert 'preload="none"' in out and "autoplay" not in out
 
 
 def test_tgs_animated_sticker_stays_a_labelled_chip(tmp_path):

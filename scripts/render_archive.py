@@ -214,26 +214,32 @@ def media_html(row, archive_dir):
             return f'<div class="chip">🎞 {html.escape(label)} (не сохранена)</div>'
         return f'<div class="chip">🖇 {html.escape(label)} (файл не сохранён)</div>'
     src = html.escape(f"{MEDIA_SUBDIR}/{rel}")
+    # Performance: images load lazily, players don't buffer until played
+    # (preload="none"), and looping "autoplay" media carries data-auto instead
+    # of the autoplay attribute so the page's IntersectionObserver plays it only
+    # while it's on screen — dozens of videos decoding at once is what made
+    # Safari crawl.
     if kind == "sticker":
         ext = os.path.splitext(rel)[1].lower()
         if ext == ".webp":
-            return f'<img class="stk" src="{src}">'
+            return f'<img class="stk" loading="lazy" decoding="async" src="{src}">'
         if ext == ".webm":
-            return (f'<video class="stk" autoplay muted loop playsinline '
-                    f'src="{src}"></video>')
+            return (f'<video class="stk" data-auto muted loop playsinline '
+                    f'preload="none" src="{src}"></video>')
         # .tgs is gzipped Lottie JSON — a plain browser can't play it inline.
         return f'<div class="chip">🎨 {html.escape(label)} (анимированный)</div>'
     if kind == "photo":
-        return f'<a href="{src}" target="_blank"><img class="ph" src="{src}"></a>'
+        return (f'<a href="{src}" target="_blank">'
+                f'<img class="ph" loading="lazy" decoding="async" src="{src}"></a>')
     if kind in ("video", "video_note"):
-        return f'<video class="vid" controls src="{src}"></video>'
+        return f'<video class="vid" controls preload="none" src="{src}"></video>'
     if kind == "animation":
-        # Gif-like: silent, looping, plays without a click.
-        return (f'<video class="vid" autoplay muted loop playsinline '
-                f'src="{src}"></video>')
+        # Gif-like: silent, looping — played only while visible (data-auto).
+        return (f'<video class="vid" data-auto muted loop playsinline '
+                f'preload="none" src="{src}"></video>')
     if kind in ("voice", "audio"):
         # Playback-speed button cycles 1×/1.5×/2× like Telegram (wired in JS).
-        return (f'<span class="voice"><audio controls src="{src}"></audio>'
+        return (f'<span class="voice"><audio controls preload="none" src="{src}"></audio>'
                 f'<button type="button" class="spd">1×</button></span>')
     return f'<a class="chip" href="{src}" target="_blank">📎 {html.escape(label)}</a>'
 
@@ -348,7 +354,8 @@ font-size:13px;cursor:pointer;display:none}
 padding:3px 12px;border-radius:10px;margin:10px 0;position:sticky;top:4px}
 .newsep{align-self:stretch;text-align:center;color:#8ecdf0;font-size:12px;font-weight:600;
 margin:12px 0 6px;border-top:1px solid #3a5a78;padding-top:6px}
-.msg{max-width:64%;padding:6px 11px;border-radius:14px;word-wrap:break-word;margin-bottom:1px}
+.msg{max-width:64%;padding:6px 11px;border-radius:14px;word-wrap:break-word;margin-bottom:1px;
+content-visibility:auto;contain-intrinsic-size:0 48px}
 .msg.theirs{background:var(--theirs);align-self:flex-start;border-bottom-left-radius:4px}
 .msg.mine{background:var(--mine);align-self:flex-end;border-bottom-right-radius:4px}
 .msg.deleted{outline:1px solid var(--rust);opacity:.9}
@@ -420,6 +427,19 @@ document.addEventListener('click',e=>{
   audio.playbackRate=next;
   b.textContent=(Number.isInteger(next)?next:next.toFixed(1))+'×';
 });
+
+// Looping "gif" media (animations, video stickers) plays only while on screen.
+// Rendered with data-auto and preload="none" instead of the autoplay attribute,
+// so the browser buffers and decodes just the few in view rather than every one
+// on the page at once — the main thing that made a big archive lag.
+const autoPlayVisible=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{
+    const v=e.target;
+    if(e.isIntersecting){ const p=v.play(); if(p&&p.catch) p.catch(()=>{}); }
+    else { v.pause(); }
+  });
+},{root:feed,rootMargin:'150px'});
+document.querySelectorAll('video[data-auto]').forEach(v=>autoPlayVisible.observe(v));
 """
 
 
