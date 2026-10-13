@@ -68,7 +68,7 @@ ssh -o BatchMode=yes "$REMOTE" "test -d '$REMOTE_DIR/media'"
 probe=$?
 set -e
 case "$probe" in
-  0) rsync -az --timeout=120 --ignore-existing \
+  0) rsync -az --timeout=120 --ignore-existing --progress \
        "$REMOTE:$REMOTE_DIR/media/" "$LOCAL_DIR/media/" ;;
   1) echo "==> no media directory on the server yet — nothing to pull" ;;
   *) echo "!! cannot reach $REMOTE (ssh exited $probe) — refusing to report" >&2
