@@ -50,26 +50,54 @@ MASTER="$LOCAL_DIR/master.sqlite3"
 mkdir -p "$SNAPSHOT_DIR" "$LOCAL_DIR/media"
 
 echo "==> pulling database and media from $REMOTE"
+
+# The link to the VPS drops SSH mid-transfer now and then (provider network
+# blips): a plain pull then aborts and copies nothing. Keep the connection
+# alive with server keepalives, and retry a few times before giving up — rsync
+# with --ignore-existing resumes cleanly, so a retry only ever finishes the job.
+SSH_OPTS="-o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=20"
+retry() {  # retry <attempts> <sleep-seconds> <command...>
+  local n="$1" s="$2"; shift 2
+  local i=1
+  while true; do
+    "$@" && return 0
+    if [ "$i" -ge "$n" ]; then return 1; fi
+    echo "   попытка $i/$n не удалась, повтор через ${s}с..." >&2
+    sleep "$s"; i=$((i + 1))
+  done
+}
+
 # NOTE: only the main .sqlite3 file is pulled, not its -wal/-shm sidecars. The
 # bot runs in WAL mode, so the newest committed rows can still be sitting in
 # the -wal file at the moment of the rsync; they arrive with the following
 # week's pull. Deliberately left alone for now: doing it properly means asking
 # the server for a checkpointed copy (the way /admin -> Экспорт already does,
 # via SQLite's backup API) rather than rsyncing a live file.
-rsync -az --timeout=120 "$REMOTE:$REMOTE_DIR/reminders.sqlite3" "$SNAPSHOT_DIR/snapshot.sqlite3"
+retry 4 8 rsync -az --timeout=120 -e "ssh $SSH_OPTS" \
+  "$REMOTE:$REMOTE_DIR/reminders.sqlite3" "$SNAPSHOT_DIR/snapshot.sqlite3" \
+  || { echo "!! не удалось скачать базу после нескольких попыток — обрыв связи" >&2; exit 1; }
 
 # The media directory does not exist until the first file is downloaded, and
 # rsync exits non-zero when the source is missing. `|| true` used to paper over
 # that -- but it swallowed genuine auth and network failures just as happily,
 # which is what let months of missing media go unnoticed. Probe first, so only
 # "not there yet" is tolerated.
-set +e
-ssh -o BatchMode=yes "$REMOTE" "test -d '$REMOTE_DIR/media'"
-probe=$?
-set -e
+# Retry the probe only on a connection failure (255), not on a legit "missing"
+# (1), so a real absence isn't mistaken for a dropped link.
+probe=255
+for i in 1 2 3 4; do
+  set +e
+  ssh $SSH_OPTS -o BatchMode=yes "$REMOTE" "test -d '$REMOTE_DIR/media'"
+  probe=$?
+  set -e
+  [ "$probe" != 255 ] && break
+  echo "   проба ssh оборвалась (255), повтор $i..." >&2
+  sleep 8
+done
 case "$probe" in
-  0) rsync -az --timeout=120 --ignore-existing --progress \
-       "$REMOTE:$REMOTE_DIR/media/" "$LOCAL_DIR/media/" ;;
+  0) retry 4 8 rsync -az --timeout=120 --ignore-existing --progress -e "ssh $SSH_OPTS" \
+       "$REMOTE:$REMOTE_DIR/media/" "$LOCAL_DIR/media/" \
+       || { echo "!! медиа не докачалось после нескольких попыток — обрыв связи" >&2; exit 1; } ;;
   1) echo "==> no media directory on the server yet — nothing to pull" ;;
   *) echo "!! cannot reach $REMOTE (ssh exited $probe) — refusing to report" >&2
      echo "   a successful backup that copied nothing" >&2
